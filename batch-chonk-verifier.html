@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batch Chonk Verifier - Technical Review</title>
+<style>
+:root{--bg:#0d1117;--s:#161b22;--s2:#1c2129;--b:#30363d;--t:#e6edf3;--m:#8b949e;--a:#58a6ff;--g:#3fb950;--r:#f85149;--o:#d29922;--p:#bc8cff;--c:#79c0ff;--y:#e3b341}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'SF Mono','Fira Code',monospace;background:var(--bg);color:var(--t);line-height:1.65}
+nav{position:sticky;top:0;z-index:99;background:rgba(13,17,23,.97);backdrop-filter:blur(12px);border-bottom:1px solid var(--b);padding:8px 20px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+nav a{color:var(--m);text-decoration:none;padding:3px 8px;border-radius:6px;font-size:11px;transition:.2s}
+nav a:hover,nav a.active{color:var(--a);background:rgba(88,166,255,.1)}
+nav .logo{color:var(--t);font-weight:700;font-size:13px;margin-right:12px;letter-spacing:.5px}
+.wrap{max-width:960px;margin:56px auto 60px;padding:0 24px}
+section{margin-bottom:48px;scroll-margin-top:52px}
+h2{font-size:17px;color:var(--a);margin-bottom:14px;padding-bottom:6px;border-bottom:1px solid var(--b)}
+h3{font-size:13px;color:var(--t);margin:16px 0 8px}
+h4{font-size:12px;color:var(--c);margin:10px 0 4px}
+p,li{font-size:12px;color:var(--m);margin-bottom:6px}
+ul{padding-left:16px}
+strong{color:var(--t)}
+em{color:var(--o);font-style:normal}
+a{color:var(--a)}
+.card{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:14px;margin:8px 0}
+.card.key{border-color:var(--a);background:rgba(88,166,255,.03)}
+.card.warn{border-color:var(--o)}
+.card.ok{border-color:var(--g)}
+pre{background:var(--s);border:1px solid var(--b);border-radius:6px;padding:10px 12px;overflow-x:auto;font-size:11px;line-height:1.5;margin:6px 0}
+code{font-family:inherit}
+.kw{color:var(--p)}.ty{color:var(--c)}.fn{color:var(--y)}.cm{color:#6e7681;font-style:italic}.str{color:var(--g)}.num{color:var(--o)}
+.tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;font-weight:600;vertical-align:middle}
+.tag.cpp{background:rgba(210,153,34,.15);color:var(--o)}
+.tag.ts{background:rgba(121,192,255,.15);color:var(--c)}
+.tag.new{background:rgba(63,185,80,.15);color:var(--g)}
+table{width:100%;border-collapse:collapse;font-size:11px;margin:6px 0}
+th{text-align:left;color:var(--a);border-bottom:1px solid var(--b);padding:5px 8px;font-weight:600}
+td{color:var(--m);border-bottom:1px solid rgba(48,54,61,.5);padding:5px 8px;vertical-align:top}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:700px){.cols{grid-template-columns:1fr}}
+.timeline{display:flex;flex-direction:column;gap:2px;margin:8px 0;padding-left:16px;border-left:2px solid var(--b)}
+.timeline .ev{padding:4px 0 4px 12px;font-size:11px;position:relative}
+.timeline .ev::before{content:'';position:absolute;left:-9px;top:10px;width:8px;height:8px;border-radius:50%;border:2px solid var(--b);background:var(--bg)}
+.timeline .ev.feat::before{border-color:var(--g);background:var(--g)}
+.timeline .ev.fix::before{border-color:var(--r);background:var(--r)}
+.timeline .ev.refactor::before{border-color:var(--p);background:var(--p)}
+.anim{opacity:0;transform:translateY(10px);transition:opacity .4s,transform .4s}
+.anim.vis{opacity:1;transform:none}
+details>summary{cursor:pointer;font-size:12px;color:var(--a);padding:4px 0;list-style:none}
+details>summary::before{content:'+ ';color:var(--m)}
+details[open]>summary::before{content:'- '}
+</style>
+</head>
+<body>
+<nav>
+<span class="logo">BATCH CHONK VERIFIER</span>
+<a href="#tldr">TL;DR</a>
+<a href="#why">Why</a>
+<a href="#algo">Algorithm</a>
+<a href="#sound">Soundness</a>
+<a href="#code">Code</a>
+<a href="#ts">TS Integration</a>
+<a href="#config">Config</a>
+<a href="#history">History</a>
+<a href="#tests">Tests</a>
+</nav>
+
+<div class="wrap">
+
+<section id="tldr" class="anim">
+<h2>TL;DR</h2>
+<div class="card key">
+<p><strong>Problem:</strong> Each IVC proof verification requires an expensive IPA multi-scalar multiplication (MSM) over the Grumpkin SRS. At ~200ms per proof, verifying 30 P2P transactions sequentially takes 6 seconds.</p>
+<p style="margin-top:8px"><strong>Solution:</strong> <code>IPA::batch_reduce_verify</code> checks N proofs in a single MSM. Cost is <em>O(1) MSMs</em> for valid batches, <em>O(k log N)</em> for k bad proofs via bisection. Reduce phase (sumcheck, databus, Goblin) runs in parallel across worker threads.</p>
+<p style="margin-top:8px"><strong>Result:</strong> ~30x throughput improvement for honest batches. Bad proofs are isolated without re-running the expensive reduce phase.</p>
+</div>
+</section>
+
+<section id="why" class="anim">
+<h2>Why Batch?</h2>
+<p>Chonk IVC verification has two phases with very different cost profiles:</p>
+<div class="cols">
+<div class="card">
+<h4>Phase 1: Reduce <span class="tag cpp">per-proof</span></h4>
+<p>MegaZK sumcheck, databus, Goblin merge/ECCVM/Translator. Produces an IPA claim + transcript. <strong>Embarrassingly parallel</strong> across proofs.</p>
+</div>
+<div class="card">
+<h4>Phase 2: IPA Check <span class="tag cpp">per-batch</span></h4>
+<p>Single <code>IPA::batch_reduce_verify</code> over all claims. One MSM regardless of batch size. <strong>This is the key saving.</strong></p>
+</div>
+</div>
+<p>Without batching, each proof pays the full MSM cost. With batching, N proofs share one MSM. The reduce phase parallelizes naturally via work-stealing.</p>
+</section>
+
+<section id="algo" class="anim">
+<h2>The Algorithm</h2>
+
+<h3>Coordinator Loop</h3>
+<pre>
+<span class="kw">loop</span> {
+    <span class="cm">// Wait for proofs (no timeout - process immediately when idle)</span>
+    batch = take_up_to(batch_size, queue)
+
+    <span class="cm">// Phase 1: Parallel reduce (work-stealing, N workers)</span>
+    results = <span class="fn">parallel_reduce</span>(batch)   <span class="cm">// IPA claims, not yet checked</span>
+    emit failures from reduce phase
+
+    <span class="cm">// Phase 2: Single batch IPA check</span>
+    ok = <span class="fn">IPA::batch_reduce_verify</span>(claims, transcripts)
+
+    <span class="kw">if</span> ok:  <span class="fn">emit_ok</span>(all)              <span class="cm">// Happy path: 1 MSM total</span>
+    <span class="kw">else</span>:   <span class="fn">bisect</span>(indices, depth=0)   <span class="cm">// Find the bad ones</span>
+}
+</pre>
+
+<h3>Bisection</h3>
+<pre>
+<span class="fn">bisect</span>(indices, depth):
+    <span class="kw">if</span> |indices| == 1:
+        emit <span class="str">FAILED</span>                      <span class="cm">// Base case</span>
+        <span class="kw">return</span>
+
+    left, right = split(indices)
+    left_ok = <span class="fn">batch_check</span>(left)
+
+    <span class="kw">if</span> left_ok:
+        <span class="fn">emit_ok</span>(left)                       <span class="cm">// Left is clean</span>
+        <span class="fn">bisect</span>(right, depth+1)               <span class="cm">// All bad must be right</span>
+    <span class="kw">else</span>:
+        <span class="fn">bisect</span>(left, depth+1)                <span class="cm">// Left has bad proofs</span>
+        right_ok = <span class="fn">batch_check</span>(right)
+        <span class="kw">if</span> right_ok: <span class="fn">emit_ok</span>(right)
+        <span class="kw">else</span>: <span class="fn">bisect</span>(right, depth+1)          <span class="cm">// Both halves bad</span>
+</pre>
+
+<div class="card key">
+<h4>Key optimization</h4>
+<p>When the left half passes, we <strong>skip</strong> batch_check on the right and recurse directly. Since IPA batch verification has negligible soundness error, a passing left half means all failures are in the right. This saves one MSM per level where left succeeds.</p>
+</div>
+</section>
+
+<section id="sound" class="anim">
+<h2>Soundness Argument</h2>
+
+<div class="card ok">
+<h4>Claim: Every proof is correctly classified as OK or FAILED.</h4>
+</div>
+
+<h3>1. batch_reduce_verify is sound</h3>
+<p><code>IPA::batch_reduce_verify</code> takes a random linear combination of N IPA opening claims. The probability of a false positive (invalid claim passing) is <em>negligible</em> in the field size (~2<sup>-254</sup> for Grumpkin). This is a standard Schwartz-Zippel argument.</p>
+
+<h3>2. If left passes, all failures are in right</h3>
+<p>If <code>batch_check(left)</code> returns true, each claim in the left subset individually satisfies IPA verification (with overwhelming probability). Therefore, the claim(s) causing the full-batch failure must be in the right subset. Skipping right's re-check is sound.</p>
+
+<h3>3. Completeness</h3>
+<p>Every index appears in exactly one of {left, right} at each level. Recursion terminates at |indices|=1. Every proof is either:</p>
+<ul>
+<li>Emitted as OK via <code>emit_ok</code> at some bisection level, or</li>
+<li>Identified as FAILED at the base case (single proof fails batch_check)</li>
+</ul>
+<p>No proof is dropped or double-counted.</p>
+
+<h3>4. Reduce phase is not repeated</h3>
+<p>The expensive <code>reduce_to_ipa_claim</code> (sumcheck, Goblin, etc.) runs once in Phase 1. Bisection only re-runs the cheap <code>batch_check</code> (IPA MSM) on subsets. The IPA claims and transcripts from Phase 1 are reused.</p>
+
+<h3>Complexity</h3>
+<table>
+<tr><th>Scenario</th><th>MSMs</th><th>Notes</th></tr>
+<tr><td>All valid (happy path)</td><td>1</td><td>Single batch_check</td></tr>
+<tr><td>1 bad in N</td><td>O(log N)</td><td>Binary search to find it</td></tr>
+<tr><td>k bad in N</td><td>O(k log N)</td><td>Each bad proof ~log N levels</td></tr>
+<tr><td>All bad (worst case)</td><td>O(N log N)</td><td>Adversarial; rare on honest networks</td></tr>
+</table>
+</section>
+
+<section id="code" class="anim">
+<h2>C++ Implementation</h2>
+
+<details>
+<summary>chonk_batch_verifier.cpp &mdash; coordinator_loop (the heart)</summary>
+<pre>
+<span class="kw">void</span> <span class="ty">ChonkBatchVerifier</span>::<span class="fn">coordinator_loop</span>() {
+    <span class="kw">while</span> (<span class="kw">true</span>) {
+        <span class="cm">// Collect batch under lock</span>
+        std::vector&lt;VerifyRequest&gt; batch;
+        {
+            std::unique_lock lock(mutex_);
+            cv_.<span class="fn">wait</span>(lock, [<span class="kw">this</span>] { <span class="kw">return</span> shutdown_ || !queue_.empty(); });
+            <span class="ty">size_t</span> take = std::min(queue_.size(), (<span class="ty">size_t</span>)batch_size_);
+            batch = move(queue_[<span class="num">0</span>..take]);
+            <span class="cm">// Filter invalid vk_index → emit FAILED immediately</span>
+        }
+
+        <span class="cm">// Phase 1: parallel reduce (work-stealing)</span>
+        <span class="kw">auto</span> results = <span class="fn">parallel_reduce</span>(batch);
+        <span class="cm">// Emit reduce-phase failures, collect passed indices</span>
+
+        <span class="cm">// Phase 2: batch IPA</span>
+        <span class="kw">bool</span> ok = <span class="fn">batch_check</span>(results, passed);
+
+        <span class="kw">if</span> (ok) <span class="fn">emit_ok</span>(results, passed, ...);
+        <span class="kw">else</span>    <span class="fn">bisect</span>(results, passed, <span class="num">0</span>, ...);
+    }
+}
+</pre>
+</details>
+
+<details>
+<summary>parallel_reduce &mdash; work-stealing across N workers</summary>
+<pre>
+std::atomic&lt;<span class="ty">size_t</span>&gt; work_index{ <span class="num">0</span> };
+<span class="kw">for</span> (w = <span class="num">0</span>; w &lt; num_workers; w++) {
+    workers.emplace_back([&amp;]() {
+        <span class="fn">set_parallel_for_concurrency</span>(<span class="num">1</span>);  <span class="cm">// single-threaded per worker</span>
+        <span class="kw">while</span> (<span class="kw">true</span>) {
+            idx = work_index.<span class="fn">fetch_add</span>(<span class="num">1</span>);
+            <span class="kw">if</span> (idx &gt;= num_proofs) <span class="kw">break</span>;
+            <span class="kw">try</span> {
+                <span class="ty">ChonkNativeVerifier</span> v(vks_[req.vk_index]);
+                results[idx] = v.<span class="fn">reduce_to_ipa_claim</span>(req.proof);
+            } <span class="kw">catch</span> (...) { results[idx] = FAILED; }
+        }
+    });
+}
+</pre>
+</details>
+
+<details>
+<summary>batch_check &mdash; single MSM over all IPA claims</summary>
+<pre>
+<span class="kw">bool</span> <span class="fn">batch_check</span>(results, indices) {
+    <span class="fn">set_parallel_for_concurrency</span>(num_cores_);  <span class="cm">// multi-threaded MSM</span>
+    <span class="cm">// Collect claims + transcripts</span>
+    <span class="kw">auto</span> ipa_vk = <span class="ty">VerifierCommitmentKey</span>&lt;Grumpkin&gt;{ECCVM_FIXED_SIZE};
+    <span class="kw">return</span> <span class="ty">IPA</span>&lt;Grumpkin&gt;::<span class="fn">batch_reduce_verify</span>(ipa_vk, claims, transcripts);
+}
+</pre>
+</details>
+
+<details>
+<summary>bisect &mdash; binary search for bad proofs</summary>
+<pre>
+<span class="kw">void</span> <span class="fn">bisect</span>(results, indices, depth, reduce_start) {
+    <span class="kw">if</span> (indices.size() == <span class="num">1</span>) {
+        <span class="fn">on_result_</span>(VerifyResult::failed(...));  <span class="cm">// base case</span>
+        <span class="kw">return</span>;
+    }
+    left, right = split(indices);
+    <span class="kw">bool</span> left_ok = <span class="fn">batch_check</span>(results, left);
+
+    <span class="kw">if</span> (left_ok) {
+        <span class="fn">emit_ok</span>(left);
+        <span class="fn">bisect</span>(right, depth+<span class="num">1</span>);  <span class="cm">// skip right check</span>
+    } <span class="kw">else</span> {
+        <span class="fn">bisect</span>(left, depth+<span class="num">1</span>);
+        <span class="kw">if</span> (<span class="fn">batch_check</span>(right)) <span class="fn">emit_ok</span>(right);
+        <span class="kw">else</span> <span class="fn">bisect</span>(right, depth+<span class="num">1</span>);
+    }
+}
+</pre>
+</details>
+
+<h3>Thread Model</h3>
+<table>
+<tr><th>Thread</th><th>Role</th><th>Sync</th></tr>
+<tr><td style="color:var(--a)">coordinator</td><td>Collect, dispatch, batch_check, bisect, emit</td><td>mutex + cv (queue)</td></tr>
+<tr><td style="color:var(--c)">worker[0..N]</td><td>reduce_to_ipa_claim (work-stealing)</td><td>atomic work_index</td></tr>
+<tr><td style="color:var(--p)">writer</td><td>Drain results, msgpack serialize, write_frame to FIFO</td><td>result_mutex + result_cv</td></tr>
+</table>
+</section>
+
+<section id="ts" class="anim">
+<h2>TypeScript Integration</h2>
+
+<h3>Node Topology</h3>
+<pre>
+<span class="ty">AztecNodeService</span>
+  <span class="kw">peer</span>: <span class="ty">BatchChonkVerifier</span>         <span class="cm">← batched IPA, persistent bb subprocess</span>
+    bb subprocess ←→ FIFO pipe ←→ FifoFrameReader
+  <span class="kw">rpc</span>:  <span class="ty">QueuedIVCVerifier</span>           <span class="cm">← file-based, concurrency-limited</span>
+    wraps <span class="ty">BBCircuitVerifier</span>
+  <span class="kw">test</span>: <span class="ty">TestCircuitVerifier</span>         <span class="cm">← always valid (both peer + rpc)</span>
+</pre>
+
+<h3>Data Flow</h3>
+<pre>
+Tx arrives → <span class="fn">verifyProof</span>(tx)
+  → extract vkIndex from circuit type
+  → attachPublicInputs → flat proof fields
+  → <span class="fn">enqueueProof</span>(vkIndex, fields)
+    → pendingRequests.set(id, {resolve, reject})
+    → sendQueue.put(bb.chonkBatchVerifierQueue)
+                    ↓ Unix socket RPC
+              C++ coordinator processes batch
+                    ↓ Named FIFO pipe
+    ← FifoFrameReader.on('frame')
+    ← Unpackr.unpack(msgpack) → FifoVerifyResult
+    ← <span class="fn">handleResult</span>() → resolve promise
+</pre>
+
+<h3>Wire Format</h3>
+<pre>
+┌────────────────────┬──────────────────┐
+│ 4-byte BE length   │ msgpack payload  │
+└────────────────────┴──────────────────┘
+  readUInt32BE(0)      Unpackr.unpack()
+</pre>
+
+<h3>Factory Methods</h3>
+<div class="cols">
+<div class="card">
+<h4>Production: <code>BatchChonkVerifier.new(config, batchSize, label)</code></h4>
+<p>Loads protocol VKs (HidingKernelToRollup, HidingKernelToPublic). Maps circuit names to VK indices.</p>
+</div>
+<div class="card">
+<h4>Testing: <code>BatchChonkVerifier.newForTesting(config, vks, batchSize)</code></h4>
+<p>Takes custom VK buffers. Maps by numeric index ("0", "1", ...). Label fixed to "test".</p>
+</div>
+</div>
+</section>
+
+<section id="config" class="anim">
+<h2>Configuration</h2>
+<table>
+<tr><th>Env Var</th><th>Scope</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>BB_CHONK_VERIFY_MAX_BATCH</code></td><td>Peer</td><td>30</td><td>Upper bound on proofs per batch*</td></tr>
+<tr><td><code>BB_CHONK_VERIFY_BATCH_CONCURRENCY</code></td><td>Peer</td><td>0 (auto)</td><td>Worker threads for parallel reduce</td></tr>
+<tr><td><code>BB_NUM_IVC_VERIFIERS</code></td><td>RPC</td><td>8</td><td>Max concurrent verifications</td></tr>
+<tr><td><code>BB_IVC_CONCURRENCY</code></td><td>RPC</td><td>1</td><td>Threads per verification</td></tr>
+</table>
+<div class="card warn">
+<p>* <strong>BB_CHONK_VERIFY_MAX_BATCH does not delay verification.</strong> Proofs are processed immediately as they arrive. The max batch only caps how many can accumulate while a batch is already being processed.</p>
+</div>
+</section>
+
+<section id="history" class="anim">
+<h2>Development History</h2>
+<div class="timeline">
+<div class="ev feat"><strong>feat: batched chonk verification</strong> <span class="tag new">#21083</span><br><span style="color:var(--m)">Initial C++ implementation: IPABatchProcessor with parallel reduce + batch IPA check</span></div>
+<div class="ev feat"><strong>feat: integrate batched honk-translator proving</strong> <span class="tag new">#21263</span><br><span style="color:var(--m)">Integrated into the full Chonk verification pipeline</span></div>
+<div class="ev refactor"><strong>refactor: rename IPABatchProcessor -> ChonkBatchVerifier</strong><br><span style="color:var(--m)">Moved from standalone batch_verifier/ into chonk/ directory</span></div>
+<div class="ev feat"><strong>feat: BatchChonkVerifier service with FIFO</strong><br><span style="color:var(--m)">Added ChonkBatchVerifierService with writer thread, named FIFO pipe, and msgpack wire protocol</span></div>
+<div class="ev refactor"><strong>refactor: remove partial-batch timeout</strong><br><span style="color:var(--m)">Key design decision: process immediately when idle, don't wait for batch to fill</span></div>
+<div class="ev fix"><strong>fix: catch exceptions in parallel_reduce</strong><br><span style="color:var(--m)">Prevents worker thread hangs on malformed proofs</span></div>
+<div class="ev refactor"><strong>refactor: move service from static global to BBApiRequest</strong><br><span style="color:var(--m)">Clean ownership: service lifetime tied to RPC request context</span></div>
+<div class="ev fix"><strong>fix: batch verifier review fixes</strong> <span class="tag new">#21644</span><br><span style="color:var(--m)">Security + performance: async I/O, set_parallel_for_concurrency in batch_check</span></div>
+<div class="ev feat"><strong>feat: batch chonk verifier TS integration</strong> <span class="tag new">#21823</span><br><span style="color:var(--m)">BatchChonkVerifier TS class, FifoFrameReader, server.ts peer/RPC split, tests, bench</span></div>
+</div>
+</section>
+
+<section id="tests" class="anim">
+<h2>Test Coverage</h2>
+<div class="cols">
+<div class="card">
+<h4>C++ <span class="tag cpp">chonk_batch_verifier.test.cpp</span></h4>
+<ul>
+<li>BatchOfTwoValidProofs</li>
+<li>FlushOnShutdown (1 proof, batch_size=4)</li>
+<li>TamperedProofBisected (good + bad)</li>
+<li>InvalidVkIndex</li>
+<li>RandomMixedBatches: 9 seeded scenarios (all valid, all invalid, 1/30, 10/30, 15/30, 29/30, multi-batch, single-core, batch_size=1)</li>
+</ul>
+</div>
+<div class="card">
+<h4>TypeScript <span class="tag ts">ivc-integration</span></h4>
+<ul>
+<li>Flush, parallel, mixed valid/invalid, multiple VKs</li>
+<li>Sub-batch flush, exact boundaries, degenerate sizes</li>
+<li>All invalid, bisection patterns, core extremes</li>
+<li>Start/stop cycles, 8 seeded random patterns</li>
+<li>Bench: core sweep (2/4/8), batch sweep, bisection overhead</li>
+</ul>
+</div>
+</div>
+<p>All TS tests exercise <code>BatchChonkVerifier</code> class via <code>newForTesting()</code> &mdash; not raw bb.js.</p>
+</section>
+
+<section id="errors" class="anim">
+<h2>Error Handling</h2>
+<table>
+<tr><th>Scenario</th><th>Where</th><th>Result</th></tr>
+<tr><td>Invalid VK index</td><td>C++ coordinator</td><td>Immediate FAILED</td></tr>
+<tr><td>reduce_to_ipa_claim throws</td><td>C++ worker</td><td>Caught, FAILED with message</td></tr>
+<tr><td>Batch IPA fails</td><td>C++ coordinator</td><td>Bisection</td></tr>
+<tr><td>bb RPC send fails</td><td>TS sendQueue</td><td>Pending promise rejected</td></tr>
+<tr><td>FIFO stream ends</td><td>TS FifoFrameReader</td><td>All pending rejected</td></tr>
+<tr><td>Process exit</td><td>TS signal handler</td><td>Synchronous FIFO unlink</td></tr>
+</table>
+</section>
+
+</div>
+
+<script>
+const obs=new IntersectionObserver(e=>e.forEach(x=>{if(x.isIntersecting)x.target.classList.add('vis')}),{threshold:.1});
+document.querySelectorAll('.anim').forEach(el=>obs.observe(el));
+const navLinks=document.querySelectorAll('nav a');
+const sections=document.querySelectorAll('section[id]');
+window.addEventListener('scroll',()=>{let c='';sections.forEach(s=>{if(scrollY>=s.offsetTop-80)c=s.id});navLinks.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+c))});
+</script>
+</body>
+</html>
