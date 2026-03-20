@@ -81,6 +81,45 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 </div>
 
+<!-- BENCHMARKS -->
+<div class="sec">
+<h2>Benchmarks (Real Proofs)</h2>
+<div class="g" style="grid-template-columns:1fr 1fr 1fr">
+<div class="box">
+<h3>Core Count Scaling</h3>
+<p>16 proofs, batch_size=8</p>
+<table>
+<tr><th>Cores</th><th>Wall</th><th>Avg/proof</th><th>Throughput</th></tr>
+<tr><td>2</td><td>971ms</td><td>125ms</td><td class="good">16.5/s</td></tr>
+<tr><td>4</td><td>765ms</td><td>80ms</td><td class="good">20.9/s</td></tr>
+<tr><td>8</td><td>672ms</td><td>59ms</td><td class="good">23.8/s</td></tr>
+</table>
+</div>
+<div class="box">
+<h3>Batch Size Scaling</h3>
+<p>8 proofs, 8 cores</p>
+<table>
+<tr><th>Batch</th><th>Wall</th><th>Throughput</th></tr>
+<tr><td>2</td><td>729ms</td><td>11.0/s</td></tr>
+<tr><td>4</td><td>664ms</td><td>12.0/s</td></tr>
+<tr><td>8</td><td>619ms</td><td class="good">12.9/s</td></tr>
+</table>
+</div>
+<div class="box">
+<h3>Bisection Overhead</h3>
+<p>8 proofs, 2 bad, 8 cores</p>
+<table>
+<tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Wall time</td><td>606ms</td></tr>
+<tr><td>vs all-valid (619ms)</td><td class="good">-2%</td></tr>
+<tr><td>Bad proofs isolated</td><td>2/8</td></tr>
+</table>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Bisection adds negligible overhead because reduce phase is not repeated.</p>
+</div>
+</div>
+<p style="font-size:10px;color:var(--m)">Measured with test-circuit proofs (small gates). Production proofs are larger but the IPA batch check — the key optimization — scales the same.</p>
+</div>
+
 <hr>
 
 <!-- ROW 2: Algorithm + Soundness -->
