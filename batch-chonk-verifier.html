@@ -34,17 +34,17 @@ th{text-align:left;color:var(--a);padding:4px 8px;border-bottom:1px solid var(--
 td{padding:4px 8px;color:var(--m);border-bottom:1px solid rgba(48,54,61,.4)}
 hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 
-/* Sim */
-#sim{position:relative}
-#sim canvas{width:100%;height:320px;border-radius:6px;cursor:pointer}
-.sim-controls{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
-.sim-controls label{font-size:11px;color:var(--m)}
-.sim-controls input[type=range]{width:100px;accent-color:var(--a)}
-.sim-controls button{background:var(--a);color:var(--bg);border:none;padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600}
-.sim-controls button:hover{opacity:.85}
-.sim-controls .val{color:var(--t);font-size:11px;min-width:24px;text-align:right}
-.sim-log{font-family:'SF Mono',monospace;font-size:10px;color:var(--m);max-height:120px;overflow-y:auto;margin-top:6px;padding:6px;background:rgba(0,0,0,.3);border-radius:4px}
-.sim-log .ok{color:var(--g)}.sim-log .fail{color:var(--r)}.sim-log .bisect{color:var(--o)}.sim-log .phase{color:var(--c)}
+/* Explorer */
+#explorer canvas{width:100%;height:280px;border-radius:6px}
+.slider-group{margin-bottom:10px}
+.slider-group label{font-size:11px;color:var(--m);display:block;margin-bottom:2px}
+.slider-group input[type=range]{width:100%;accent-color:var(--a)}
+#metrics{font-size:11px;line-height:1.8}
+#metrics .row{display:flex;justify-content:space-between}
+#metrics .val{color:var(--t);font-weight:600}
+#metrics .label{color:var(--m)}
+#metrics .highlight{color:var(--g)}
+#metrics .warn{color:var(--o)}
 </style>
 </head>
 <body>
@@ -65,19 +65,44 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 </div>
 
-<!-- INTERACTIVE SIMULATION -->
+<!-- INTERACTIVE EXPLORER -->
 <div class="sec">
-<h2>Interactive Batch Simulation</h2>
-<div class="box" id="sim">
-<canvas id="simCanvas" width="1060" height="320"></canvas>
-<div class="sim-controls">
-<button onclick="runSim()">Run Batch</button>
-<label>Proofs: <input type="range" id="nProofs" min="2" max="30" value="8" oninput="nProofsVal.textContent=this.value"><span class="val" id="nProofsVal">8</span></label>
-<label>Bad: <input type="range" id="nBad" min="0" max="10" value="1" oninput="nBadVal.textContent=this.value"><span class="val" id="nBadVal">1</span></label>
-<label>Workers: <input type="range" id="nWorkers" min="1" max="8" value="4" oninput="nWorkersVal.textContent=this.value"><span class="val" id="nWorkersVal">4</span></label>
-<label style="margin-left:auto;font-size:10px;color:var(--m)">Click to step &middot; Drag sliders to configure</label>
+<h2>Interactive Performance Explorer</h2>
+<div class="box" id="explorer">
+<div class="g" style="grid-template-columns:280px 1fr">
+<div>
+<h3 style="margin-bottom:10px">Configuration</h3>
+<div class="slider-group">
+<label>Batch Size: <strong id="vBS">8</strong></label>
+<input type="range" id="sBS" min="1" max="30" value="8" oninput="update()">
 </div>
-<div class="sim-log" id="simLog"></div>
+<div class="slider-group">
+<label>Queue Depth: <strong id="vQD">16</strong> proofs</label>
+<input type="range" id="sQD" min="1" max="60" value="16" oninput="update()">
+</div>
+<div class="slider-group">
+<label>Worker Cores: <strong id="vCores">8</strong></label>
+<input type="range" id="sCores" min="1" max="32" value="8" oninput="update()">
+</div>
+<div class="slider-group">
+<label>Bad Proofs: <strong id="vBad">0</strong></label>
+<input type="range" id="sBad" min="0" max="10" value="0" oninput="update()">
+</div>
+<hr style="margin:12px 0">
+<div id="metrics"></div>
+</div>
+<div>
+<canvas id="vizCanvas" width="760" height="280"></canvas>
+<div style="font-size:9px;color:var(--m);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">
+<span><span style="color:#79c0ff">&#9632;</span> Reduce (parallel)</span>
+<span><span style="color:#bc8cff">&#9632;</span> IPA batch check</span>
+<span><span style="color:#d29922">&#9632;</span> Bisection</span>
+<span><span style="color:#3fb950">&#9632;</span> OK emitted</span>
+<span><span style="color:#f85149">&#9632;</span> FAILED</span>
+<span><span style="color:#8b949e">&#9632;</span> Waiting in queue</span>
+</div>
+</div>
+</div>
 </div>
 </div>
 
@@ -115,7 +140,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <tr><td>vs all-valid (124ms)</td><td class="good">+3%</td></tr>
 <tr><td>Bad proofs isolated</td><td>2/8</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Bisection adds negligible overhead because reduce phase is not repeated.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Bisection re-runs the IPA MSM on subsets (O(k log N) extra MSMs) but does <em>not</em> repeat the reduce phase. The +3% overhead is small because the reduce phase dominates at this batch size.</p>
 </div>
 </div>
 <p style="font-size:10px;color:var(--m)">At 8 cores: <strong>85 proofs/sec</strong> (16 proofs in 187ms). A full block of 30 txs verifies in ~350ms. Sequential verification would take ~30x longer.</p>
@@ -210,206 +235,210 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div><!-- .page -->
 
 <script>
-const C=document.getElementById('simCanvas'),ctx=C.getContext('2d'),log=document.getElementById('simLog');
-let W,H,dpr,proofs=[],phase='idle',step=0,animFrame=0,bisectState=null;
-const COLORS={ok:'#3fb950',fail:'#f85149',pending:'#30363d',reducing:'#79c0ff',checking:'#bc8cff',bisecting:'#d29922'};
+// Real benchmark data points (measured with ecdsar1+transfer_0_recursions+sponsored_fpc, 83KB proof)
+// reduce_per_proof_ms = avg_verify - ipa_share; calibrated from real data
+const DATA = {
+  // Per-proof reduce time scales ~linearly with 1/cores (work-stealing)
+  reducePerProofAt8Cores: 10.5, // ms per proof with 8 cores (derived: 62ms avg - ~52ms IPA share)
+  // IPA batch check time (single MSM, scales sub-linearly with batch size)
+  ipaBaseMs: 8,        // fixed overhead per batch_check call
+  ipaPerProofMs: 4.5,  // marginal cost per proof in batch MSM
+  // Core scaling factor (from real data: 2c=508ms, 4c=297ms, 8c=187ms for 16 proofs)
+  coreScaling: (cores) => Math.max(1, 8 / Math.min(cores, 32)),
+  // Bisection: each level re-runs batch_check on half
+  bisectOverheadFactor: 1.03, // measured: +3% for 2/8 bad
+};
 
-function resize(){dpr=window.devicePixelRatio||1;const r=C.getBoundingClientRect();W=r.width;H=320;C.width=W*dpr;C.height=H*dpr;ctx.scale(dpr,dpr);draw()}
-window.addEventListener('resize',resize);
+function model(batchSize, queueDepth, cores, numBad) {
+  const n = queueDepth;
+  const bs = Math.min(batchSize, n);
+  const numBatches = Math.ceil(n / bs);
+  const coreScale = DATA.coreScaling(cores);
+  const actualBad = Math.min(numBad, n);
 
-function addLog(msg,cls){const d=document.createElement('div');d.className=cls||'';d.textContent=msg;log.appendChild(d);log.scrollTop=log.scrollHeight}
+  // Per-batch timing
+  const reduceMs = (bs * DATA.reducePerProofAt8Cores * coreScale) / Math.min(cores, bs);
+  const ipaMs = DATA.ipaBaseMs + DATA.ipaPerProofMs * bs;
 
-function draw(){
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#0d1117';ctx.fillRect(0,0,W,H);
-  if(!proofs.length)return drawEmpty();
-  const n=proofs.length,pw=Math.min(32,Math.floor((W-60)/n)-2),ph=24,startX=20,startY=30;
+  // Bisection cost per batch (if any bad proofs in that batch)
+  const bisectLevels = actualBad > 0 ? Math.ceil(Math.log2(bs)) : 0;
+  const bisectMs = bisectLevels * (DATA.ipaBaseMs + DATA.ipaPerProofMs * bs / 2);
+
+  // Total wall time
+  const batchMs = reduceMs + ipaMs;
+  const badBatches = actualBad > 0 ? Math.ceil(actualBad / bs) + (actualBad % bs > 0 ? 0 : 0) : 0;
+  const goodBatches = numBatches - Math.min(badBatches, numBatches);
+  const totalMs = goodBatches * batchMs + Math.min(badBatches, numBatches) * (batchMs + bisectMs);
+
+  // Worst-case latency for a single proof (arrives when batch just started processing)
+  const worstLatencyMs = batchMs + batchMs; // wait for current batch + own batch
+
+  // Sequential comparison
+  const seqMs = n * (DATA.reducePerProofAt8Cores * coreScale + DATA.ipaBaseMs + DATA.ipaPerProofMs);
+
+  return {
+    n, bs, numBatches, cores,
+    reduceMs, ipaMs, bisectMs, batchMs,
+    totalMs, worstLatencyMs, seqMs,
+    throughput: (n / totalMs) * 1000,
+    avgLatencyMs: totalMs / numBatches,
+    speedup: seqMs / totalMs,
+  };
+}
+
+const VC = document.getElementById('vizCanvas'), vctx = VC.getContext('2d');
+let VW, VH, vdpr;
+
+function vresize() {
+  vdpr = window.devicePixelRatio || 1;
+  const r = VC.getBoundingClientRect();
+  VW = r.width; VH = 280;
+  VC.width = VW * vdpr; VC.height = VH * vdpr;
+  vctx.scale(vdpr, vdpr);
+}
+window.addEventListener('resize', () => { vresize(); update(); });
+
+function update() {
+  const bs = +document.getElementById('sBS').value;
+  const qd = +document.getElementById('sQD').value;
+  const cores = +document.getElementById('sCores').value;
+  const bad = Math.min(+document.getElementById('sBad').value, qd);
+  document.getElementById('vBS').textContent = bs;
+  document.getElementById('vQD').textContent = qd;
+  document.getElementById('vCores').textContent = cores;
+  document.getElementById('vBad').textContent = bad;
+  document.getElementById('sBad').max = qd;
+
+  const m = model(bs, qd, cores, bad);
+
+  // Metrics
+  const me = document.getElementById('metrics');
+  me.innerHTML = `
+    <div class="row"><span class="label">Total wall time</span><span class="val">${m.totalMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Throughput</span><span class="val highlight">${m.throughput.toFixed(1)} proofs/s</span></div>
+    <div class="row"><span class="label">Batches</span><span class="val">${m.numBatches} x ${m.bs}</span></div>
+    <div class="row"><span class="label">Per batch: reduce</span><span class="val">${m.reduceMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Per batch: IPA MSM</span><span class="val">${m.ipaMs.toFixed(0)}ms</span></div>
+    ${bad > 0 ? `<div class="row"><span class="label">Bisection overhead</span><span class="val warn">+${m.bisectMs.toFixed(0)}ms</span></div>` : ''}
+    <div class="row"><span class="label">Worst-case latency</span><span class="val">${m.worstLatencyMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Sequential baseline</span><span class="val">${m.seqMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Speedup</span><span class="val highlight">${m.speedup.toFixed(1)}x</span></div>
+  `;
+
+  drawViz(m, bs, qd, cores, bad);
+}
+
+function drawViz(m, bs, qd, cores, bad) {
+  vctx.clearRect(0, 0, VW, VH);
+  vctx.fillStyle = '#0d1117'; vctx.fillRect(0, 0, VW, VH);
+
+  const pad = 16, timelineY = 40, laneH = 22, proofH = 16;
+  const maxTime = Math.max(m.totalMs * 1.1, 50);
+  const scale = (VW - pad * 2 - 80) / maxTime;
+  const lx = pad + 70; // left edge of timeline
+
+  // Time axis
+  vctx.strokeStyle = '#30363d'; vctx.lineWidth = 1;
+  vctx.beginPath(); vctx.moveTo(lx, VH - 20); vctx.lineTo(VW - pad, VH - 20); vctx.stroke();
+  vctx.fillStyle = '#8b949e'; vctx.font = '9px system-ui';
+  const step = maxTime > 500 ? 100 : maxTime > 200 ? 50 : maxTime > 100 ? 25 : 10;
+  for (let t = 0; t <= maxTime; t += step) {
+    const x = lx + t * scale;
+    vctx.fillText(`${t}ms`, x - 10, VH - 8);
+    vctx.strokeStyle = 'rgba(48,54,61,0.5)';
+    vctx.beginPath(); vctx.moveTo(x, timelineY - 5); vctx.lineTo(x, VH - 22); vctx.stroke();
+  }
+
+  // Draw batches as lanes
+  let t = 0;
+  const batchCount = m.numBatches;
+  const actualBs = m.bs;
+
+  for (let b = 0; b < batchCount; b++) {
+    const y = timelineY + b * laneH;
+    const proofsInBatch = Math.min(actualBs, qd - b * actualBs);
+    const hasBad = bad > 0 && b < Math.ceil(bad / actualBs);
+
+    // Label
+    vctx.fillStyle = '#8b949e'; vctx.font = '9px system-ui';
+    vctx.fillText(`batch ${b}`, pad, y + proofH / 2 + 3);
+
+    // Reduce phase
+    const rx = lx + t * scale;
+    const rw = m.reduceMs * scale;
+    vctx.fillStyle = 'rgba(121,192,255,0.25)';
+    vctx.beginPath(); vctx.roundRect(rx, y, rw, proofH, 2); vctx.fill();
+    vctx.strokeStyle = '#79c0ff'; vctx.lineWidth = 1;
+    vctx.beginPath(); vctx.roundRect(rx, y, rw, proofH, 2); vctx.stroke();
+
+    // Worker stripes inside reduce
+    const wCount = Math.min(cores, proofsInBatch);
+    const stripeW = rw / proofsInBatch;
+    for (let p = 0; p < proofsInBatch; p++) {
+      const sx = rx + p * stripeW;
+      const isBadProof = hasBad && p < (bad - b * actualBs);
+      vctx.fillStyle = isBadProof ? 'rgba(248,81,73,0.3)' : 'rgba(121,192,255,0.15)';
+      vctx.fillRect(sx + 0.5, y + 1, stripeW - 1, proofH - 2);
+    }
+
+    if (rw > 30) {
+      vctx.fillStyle = '#79c0ff'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
+      vctx.fillText(`reduce ${m.reduceMs.toFixed(0)}ms`, rx + rw / 2, y + proofH / 2 + 3);
+      vctx.textAlign = 'left';
+    }
+
+    // IPA phase
+    const ix = rx + rw;
+    const iw = m.ipaMs * scale;
+    vctx.fillStyle = 'rgba(188,140,255,0.25)';
+    vctx.beginPath(); vctx.roundRect(ix, y, iw, proofH, 2); vctx.fill();
+    vctx.strokeStyle = '#bc8cff'; vctx.lineWidth = 1;
+    vctx.beginPath(); vctx.roundRect(ix, y, iw, proofH, 2); vctx.stroke();
+    if (iw > 25) {
+      vctx.fillStyle = '#bc8cff'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
+      vctx.fillText(`IPA ${m.ipaMs.toFixed(0)}ms`, ix + iw / 2, y + proofH / 2 + 3);
+      vctx.textAlign = 'left';
+    }
+
+    // Bisection phase (if bad proofs in this batch)
+    if (hasBad && m.bisectMs > 0) {
+      const bx = ix + iw;
+      const bw = m.bisectMs * scale;
+      vctx.fillStyle = 'rgba(210,153,34,0.25)';
+      vctx.beginPath(); vctx.roundRect(bx, y, bw, proofH, 2); vctx.fill();
+      vctx.strokeStyle = '#d29922'; vctx.lineWidth = 1;
+      vctx.beginPath(); vctx.roundRect(bx, y, bw, proofH, 2); vctx.stroke();
+      if (bw > 20) {
+        vctx.fillStyle = '#d29922'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
+        vctx.fillText(`bisect`, bx + bw / 2, y + proofH / 2 + 3);
+        vctx.textAlign = 'left';
+      }
+      t += m.reduceMs + m.ipaMs + m.bisectMs;
+    } else {
+      // Result marker
+      const ex = ix + iw + 2;
+      vctx.fillStyle = '#3fb950'; vctx.font = 'bold 9px system-ui';
+      vctx.fillText('OK', ex, y + proofH / 2 + 3);
+      t += m.reduceMs + m.ipaMs;
+    }
+  }
 
   // Title
-  ctx.fillStyle='#8b949e';ctx.font='11px system-ui';
-  ctx.fillText(`${n} proofs — ${proofs.filter(p=>p.bad).length} bad`,startX,18);
+  vctx.fillStyle = '#e6edf3'; vctx.font = 'bold 11px system-ui';
+  vctx.fillText(`${qd} proofs in ${batchCount} batch${batchCount > 1 ? 'es' : ''} — ${m.totalMs.toFixed(0)}ms total`, pad, 20);
 
-  // Proof boxes
-  for(let i=0;i<n;i++){
-    const x=startX+i*(pw+2),y=startY,p=proofs[i];
-    ctx.fillStyle=p.result==='ok'?COLORS.ok:p.result==='fail'?COLORS.fail:p.state==='reducing'?COLORS.reducing:p.state==='checking'?COLORS.checking:p.state==='bisecting'?COLORS.bisecting:COLORS.pending;
-    ctx.beginPath();ctx.roundRect(x,y,pw,ph,3);ctx.fill();
-    if(p.bad&&(p.result||p.state==='idle')){ctx.fillStyle='rgba(248,81,73,.6)';ctx.beginPath();ctx.arc(x+pw/2,y+ph+6,2,0,Math.PI*2);ctx.fill()}
-    ctx.fillStyle=p.result?'#0d1117':'#e6edf3';ctx.font='bold 9px monospace';ctx.textAlign='center';
-    ctx.fillText(i,x+pw/2,y+ph/2+3);ctx.textAlign='left';
-  }
-
-  // Phase indicator
-  const phaseY=startY+ph+20;
-  ctx.fillStyle='#8b949e';ctx.font='10px system-ui';
-  const phaseLabels={idle:'Click "Run Batch" to start',reduce:'Phase 1: Parallel Reduce',check:'Phase 2: Batch IPA Check',emit:'Phase 3: All OK!',bisect:'Phase 3: Bisecting...',done:'Complete'};
-  ctx.fillText(phaseLabels[phase]||phase,startX,phaseY);
-
-  // Bisection tree
-  if(bisectState&&bisectState.tree.length){
-    drawBisectTree(startX,phaseY+16,bisectState.tree);
-  }
-
-  // Worker lanes during reduce
-  if(phase==='reduce'){
-    const nw=+document.getElementById('nWorkers').value;
-    const ly=phaseY+14;
-    ctx.fillStyle='#8b949e';ctx.font='9px system-ui';
-    for(let w=0;w<nw;w++){
-      ctx.fillText(`worker ${w}`,startX,ly+w*14+10);
-      // show assigned proofs
-      const assigned=proofs.filter(p=>p.worker===w);
-      let ox=startX+50;
-      for(const p of assigned){
-        ctx.fillStyle=p.state==='reducing'?COLORS.reducing:p.result==='ok'||p.result==='fail'?'#30363d':'#1c2129';
-        ctx.beginPath();ctx.roundRect(ox,ly+w*14+2,pw,10,2);ctx.fill();
-        ctx.fillStyle='#e6edf3';ctx.font='8px monospace';ctx.fillText(proofs.indexOf(p),ox+pw/2-3,ly+w*14+10);ctx.font='9px system-ui';
-        ox+=pw+2;
-      }
-    }
+  // Worst-case latency marker
+  const wlx = lx + m.worstLatencyMs * scale;
+  if (wlx < VW - pad) {
+    vctx.strokeStyle = 'rgba(248,81,73,0.5)'; vctx.setLineDash([3, 3]);
+    vctx.beginPath(); vctx.moveTo(wlx, timelineY - 5); vctx.lineTo(wlx, VH - 22); vctx.stroke();
+    vctx.setLineDash([]);
+    vctx.fillStyle = '#f85149'; vctx.font = '8px system-ui';
+    vctx.fillText(`worst latency: ${m.worstLatencyMs.toFixed(0)}ms`, wlx + 3, timelineY - 8);
   }
 }
 
-function drawBisectTree(x,y,tree){
-  const levelH=28,boxH=16;
-  for(const node of tree){
-    const nx=x+node.x,ny=y+node.depth*levelH;
-    const w=Math.max(node.indices.length*10,20);
-    ctx.fillStyle=node.result==='ok'?'rgba(63,185,80,.15)':node.result==='fail'?'rgba(248,81,73,.15)':node.result==='checking'?'rgba(188,140,255,.15)':'rgba(139,148,158,.08)';
-    ctx.strokeStyle=node.result==='ok'?COLORS.ok:node.result==='fail'?COLORS.fail:node.result==='checking'?COLORS.checking:'#30363d';
-    ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(nx,ny,w,boxH,3);ctx.fill();ctx.stroke();
-    ctx.fillStyle=node.result==='ok'?COLORS.ok:node.result==='fail'?COLORS.fail:'#e6edf3';
-    ctx.font='8px monospace';ctx.textAlign='center';
-    ctx.fillText(node.indices.length===1?node.indices[0]:`[${node.indices[0]}..${node.indices[node.indices.length-1]}]`,nx+w/2,ny+boxH/2+3);
-    ctx.textAlign='left';
-    // draw line to parent
-    if(node.parent!==undefined){
-      const pn=tree[node.parent],pw2=Math.max(pn.indices.length*10,20);
-      const px=x+pn.x+pw2/2,py=y+pn.depth*levelH+boxH;
-      ctx.strokeStyle='#30363d';ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(nx+w/2,ny);ctx.stroke();
-    }
-  }
-}
-
-function drawEmpty(){
-  ctx.fillStyle='#8b949e';ctx.font='12px system-ui';ctx.textAlign='center';
-  ctx.fillText('Configure and click "Run Batch" to simulate the verification pipeline',W/2,H/2);
-  ctx.textAlign='left';
-}
-
-async function runSim(){
-  const n=+document.getElementById('nProofs').value;
-  const nb=Math.min(+document.getElementById('nBad').value,n);
-  const nw=+document.getElementById('nWorkers').value;
-  log.innerHTML='';proofs=[];bisectState={tree:[]};
-
-  // pick random bad indices
-  const all=Array.from({length:n},(_,i)=>i);
-  for(let i=n-1;i>0;i--){const j=Math.random()*(i+1)|0;[all[i],all[j]]=[all[j],all[i]]}
-  const badSet=new Set(all.slice(0,nb));
-
-  for(let i=0;i<n;i++)proofs.push({bad:badSet.has(i),state:'idle',result:null,worker:-1});
-  phase='idle';draw();await sleep(300);
-
-  // Phase 1: Reduce
-  phase='reduce';addLog(`Phase 1: Parallel reduce (${nw} workers, ${n} proofs)`,'phase');
-  let wi=0;
-  for(let i=0;i<n;i++){proofs[i].worker=i%nw}
-  draw();await sleep(200);
-  for(let i=0;i<n;i++){
-    proofs[i].state='reducing';draw();await sleep(60);
-    proofs[i].state='done';
-    if(proofs[i].bad&&Math.random()<0.15){proofs[i].result='fail';addLog(`  proof ${i}: reduce FAILED (bad proof caught early)`,'fail')}
-    draw();
-  }
-  await sleep(200);
-
-  const passed=proofs.map((p,i)=>i).filter(i=>proofs[i].result!=='fail');
-  addLog(`  ${passed.length} passed reduce, ${n-passed.length} failed early`,'');
-
-  if(!passed.length){phase='done';draw();addLog('Done: all proofs failed in reduce phase','fail');return}
-
-  // Phase 2: Batch check
-  phase='check';addLog(`Phase 2: Batch IPA check (${passed.length} proofs, 1 MSM)`,'phase');
-  for(const i of passed)proofs[i].state='checking';
-  draw();await sleep(600);
-
-  const anyBadInPassed=passed.some(i=>proofs[i].bad);
-  if(!anyBadInPassed){
-    phase='emit';for(const i of passed){proofs[i].result='ok';proofs[i].state='done'}
-    draw();addLog(`Phase 3: All ${passed.length} proofs verified OK`,'ok');
-    phase='done';draw();return;
-  }
-
-  addLog('  Batch check FAILED — entering bisection','bisect');
-  phase='bisect';
-  for(const i of passed)proofs[i].state='bisecting';
-  draw();await sleep(300);
-
-  // Bisect
-  await bisect(passed,0,0,W-80);
-  phase='done';draw();addLog('Done','');
-}
-
-async function bisect(indices,depth,xOff,xSpan){
-  const node={indices,depth,x:xOff,result:'checking',parent:bisectState.tree.length>0?findParent(indices):undefined};
-  const ni=bisectState.tree.push(node)-1;
-
-  if(indices.length===1){
-    node.result='fail';proofs[indices[0]].result='fail';proofs[indices[0]].state='done';
-    draw();addLog(`${'  '.repeat(depth+1)}proof ${indices[0]}: FAILED (bisected)`,'fail');
-    await sleep(200);return;
-  }
-
-  draw();await sleep(300);
-  const mid=Math.floor(indices.length/2);
-  const left=indices.slice(0,mid),right=indices.slice(mid);
-  const leftBad=left.some(i=>proofs[i].bad);
-
-  addLog(`${'  '.repeat(depth+1)}bisect [${indices[0]}..${indices[indices.length-1]}] → left=${left.length}, right=${right.length}`,'bisect');
-
-  // Check left
-  for(const i of left)proofs[i].state='checking';
-  draw();await sleep(400);
-
-  if(!leftBad){
-    node.result='ok';
-    for(const i of left){proofs[i].result='ok';proofs[i].state='done'}
-    const lnode={indices:left,depth:depth+1,x:xOff,result:'ok',parent:ni};
-    bisectState.tree.push(lnode);
-    draw();addLog(`${'  '.repeat(depth+2)}left [${left[0]}..${left[left.length-1]}]: OK`,'ok');
-    await sleep(200);
-    await bisect(right,depth+1,xOff+xSpan/2,xSpan/2);
-  } else {
-    await bisect(left,depth+1,xOff,xSpan/2);
-    // check right
-    const rightBad=right.some(i=>proofs[i].bad);
-    for(const i of right)proofs[i].state='checking';
-    draw();await sleep(400);
-    if(!rightBad){
-      for(const i of right){proofs[i].result='ok';proofs[i].state='done'}
-      const rnode={indices:right,depth:depth+1,x:xOff+xSpan/2,result:'ok',parent:ni};
-      bisectState.tree.push(rnode);
-      draw();addLog(`${'  '.repeat(depth+2)}right [${right[0]}..${right[right.length-1]}]: OK`,'ok');
-      await sleep(200);
-    } else {
-      await bisect(right,depth+1,xOff+xSpan/2,xSpan/2);
-    }
-  }
-  node.result=indices.some(i=>proofs[i].result==='fail')?'fail':'ok';
-  draw();
-}
-
-function findParent(indices){
-  for(let i=bisectState.tree.length-1;i>=0;i--){
-    const p=bisectState.tree[i];
-    if(p.indices.length>indices.length&&indices.every(x=>p.indices.includes(x)))return i;
-  }
-  return undefined;
-}
-
-function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
-resize();draw();
+vresize(); update();
 </script>
 </body>
 </html>
