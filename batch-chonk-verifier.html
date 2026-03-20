@@ -73,16 +73,22 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <div class="g" style="grid-template-columns:240px 1fr">
 <div>
 <div class="slider-group">
-<label>Batch Size: <strong id="vBS">16</strong></label>
-<input type="range" id="sBS" min="1" max="30" value="16" oninput="update()">
+<label>Batch Size</label>
+<select id="sBS" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
+<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16" selected>16</option>
+</select>
 </div>
 <div class="slider-group">
-<label>Queue Depth: <strong id="vQD">16</strong> proofs</label>
-<input type="range" id="sQD" min="1" max="60" value="16" oninput="update()">
+<label>Queue Depth</label>
+<select id="sQD" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
+<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16" selected>16</option><option value="32">32</option>
+</select>
 </div>
 <div class="slider-group">
-<label>Worker Cores: <strong id="vCores">8</strong></label>
-<input type="range" id="sCores" min="1" max="32" value="8" oninput="update()">
+<label>Worker Cores</label>
+<select id="sCores" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
+<option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+</select>
 </div>
 <hr style="margin:10px 0">
 <div id="metrics"></div>
@@ -348,18 +354,20 @@ function batchWallMs(bs, cores) {
 }
 
 function interpBs(data, bs) {
-  // Linear interpolation on batch size
+  if (!data.length) return bs * 50; // fallback: ~50ms per proof
   data.sort((a, b) => a[0] - b[0]);
-  if (bs <= data[0][0]) return data[0][3] * (bs / data[0][0]);
+  if (bs <= data[0][0]) return data[0][3] * Math.max(bs, 1) / Math.max(data[0][0], 1);
   if (bs >= data[data.length-1][0]) {
     const last = data[data.length-1];
     const prev = data.length > 1 ? data[data.length-2] : last;
-    const slope = (last[3] - prev[3]) / (last[0] - prev[0]);
+    const denom = last[0] - prev[0];
+    const slope = denom > 0 ? (last[3] - prev[3]) / denom : 0;
     return last[3] + slope * (bs - last[0]);
   }
   for (let i = 0; i < data.length - 1; i++) {
     if (bs >= data[i][0] && bs <= data[i+1][0]) {
-      const frac = (bs - data[i][0]) / (data[i+1][0] - data[i][0]);
+      const denom = data[i+1][0] - data[i][0];
+      const frac = denom > 0 ? (bs - data[i][0]) / denom : 0;
       return data[i][3] + frac * (data[i+1][3] - data[i][3]);
     }
   }
@@ -377,8 +385,8 @@ function reducePhaseMs(bs, cores) {
 }
 
 function ipaPhaseMs(bs, cores) {
-  const bw = batchWallMs(bs, cores);
-  const red = reducePhaseMs(bs, cores);
+  const bw = batchWallMs(bs, cores) || 50;
+  const red = reducePhaseMs(bs, cores) || 30;
   return Math.max(bw - red, 5);
 }
 
