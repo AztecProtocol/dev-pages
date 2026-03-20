@@ -106,6 +106,21 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 </div>
 
+<!-- BISECTION ANIMATION -->
+<div class="sec">
+<h2>Bisection Animation</h2>
+<div class="box" id="bisectSim">
+<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+<button onclick="runBisect()" style="background:var(--a);color:var(--bg);border:none;padding:5px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">Run</button>
+<label style="font-size:11px;color:var(--m)">Proofs: <input type="range" id="bsN" min="4" max="16" value="8" oninput="bsNv.textContent=this.value" style="width:80px;accent-color:var(--a)"><strong id="bsNv" style="min-width:16px;display:inline-block;text-align:right">8</strong></label>
+<label style="font-size:11px;color:var(--m)">Bad: <input type="range" id="bsBad" min="1" max="6" value="2" oninput="bsBv.textContent=this.value" style="width:80px;accent-color:var(--a)"><strong id="bsBv" style="min-width:16px;display:inline-block;text-align:right">2</strong></label>
+<span id="bisectStatus" style="font-size:11px;color:var(--m);margin-left:auto"></span>
+</div>
+<canvas id="bisectCanvas" width="1060" height="340"></canvas>
+<div id="bisectLog" style="font-family:'SF Mono',monospace;font-size:10px;color:var(--m);max-height:100px;overflow-y:auto;margin-top:6px;padding:6px;background:rgba(0,0,0,.3);border-radius:4px"></div>
+</div>
+</div>
+
 <!-- BENCHMARKS -->
 <div class="sec">
 <h2>Benchmarks (Example E2E App Proofs)</h2>
@@ -318,8 +333,8 @@ function model(batchSize, queueDepth, cores, numBad) {
   const goodBatches = numBatches - Math.min(badBatches, numBatches);
   const totalMs = goodBatches * batchMs + Math.min(badBatches, numBatches) * (batchMs + bisectMs);
 
-  // Worst-case latency for a single proof (arrives when batch just started processing)
-  const worstLatencyMs = batchMs + batchMs; // wait for current batch + own batch
+  // Max latency of the first proof in a batch (must wait for entire batch to complete)
+  const firstProofLatencyMs = batchMs;
 
   // Sequential comparison
   const seqMs = n * (DATA.reducePerProofAt8Cores * coreScale + DATA.ipaBaseMs + DATA.ipaPerProofMs);
@@ -327,7 +342,7 @@ function model(batchSize, queueDepth, cores, numBad) {
   return {
     n, bs, numBatches, cores,
     reduceMs, ipaMs, bisectMs, batchMs,
-    totalMs, worstLatencyMs, seqMs,
+    totalMs, firstProofLatencyMs, seqMs,
     throughput: (n / totalMs) * 1000,
     avgLatencyMs: totalMs / numBatches,
     speedup: seqMs / totalMs,
@@ -368,7 +383,7 @@ function update() {
     <div class="row"><span class="label">Per batch: reduce</span><span class="val">${m.reduceMs.toFixed(0)}ms</span></div>
     <div class="row"><span class="label">Per batch: IPA MSM</span><span class="val">${m.ipaMs.toFixed(0)}ms</span></div>
     ${bad > 0 ? `<div class="row"><span class="label">Bisection overhead</span><span class="val warn">+${m.bisectMs.toFixed(0)}ms</span></div>` : ''}
-    <div class="row"><span class="label">Worst-case latency</span><span class="val">${m.worstLatencyMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">First proof max latency</span><span class="val">${m.firstProofLatencyMs.toFixed(0)}ms</span></div>
     <div class="row"><span class="label">Sequential baseline</span><span class="val">${m.seqMs.toFixed(0)}ms</span></div>
     <div class="row"><span class="label">Speedup</span><span class="val highlight">${m.speedup.toFixed(1)}x</span></div>
   `;
@@ -475,18 +490,235 @@ function drawViz(m, bs, qd, cores, bad) {
   vctx.fillStyle = '#e6edf3'; vctx.font = 'bold 11px system-ui';
   vctx.fillText(`${qd} proofs in ${batchCount} batch${batchCount > 1 ? 'es' : ''} — ${m.totalMs.toFixed(0)}ms total`, pad, 20);
 
-  // Worst-case latency marker
-  const wlx = lx + m.worstLatencyMs * scale;
+  // First proof max latency marker
+  const wlx = lx + m.firstProofLatencyMs * scale;
   if (wlx < VW - pad) {
     vctx.strokeStyle = 'rgba(248,81,73,0.5)'; vctx.setLineDash([3, 3]);
     vctx.beginPath(); vctx.moveTo(wlx, timelineY - 5); vctx.lineTo(wlx, VH - 22); vctx.stroke();
     vctx.setLineDash([]);
     vctx.fillStyle = '#f85149'; vctx.font = '8px system-ui';
-    vctx.fillText(`worst latency: ${m.worstLatencyMs.toFixed(0)}ms`, wlx + 3, timelineY - 8);
+    vctx.fillText(`first proof latency: ${m.firstProofLatencyMs.toFixed(0)}ms`, wlx + 3, timelineY - 8);
   }
 }
 
 vresize(); update();
+
+// ── Bisection Animation ──────────────────────────────────────────────
+const BC = document.getElementById('bisectCanvas'), bctx = BC.getContext('2d');
+const bLog = document.getElementById('bisectLog');
+let BW, BH, bdpr;
+function bresize() {
+  bdpr = window.devicePixelRatio || 1;
+  const r = BC.getBoundingClientRect();
+  BW = r.width; BH = 340;
+  BC.width = BW * bdpr; BC.height = BH * bdpr;
+  bctx.scale(bdpr, bdpr);
+}
+window.addEventListener('resize', bresize);
+bresize();
+
+let bProofs = [], bTreeNodes = [], bMsmCount = 0, bRunning = false;
+
+function bAddLog(msg, cls) {
+  const d = document.createElement('div');
+  d.style.color = cls === 'ok' ? '#3fb950' : cls === 'fail' ? '#f85149' : cls === 'bisect' ? '#d29922' : cls === 'phase' ? '#79c0ff' : '#8b949e';
+  d.textContent = msg;
+  bLog.appendChild(d);
+  bLog.scrollTop = bLog.scrollHeight;
+}
+
+function bDraw() {
+  bctx.clearRect(0, 0, BW, BH);
+  bctx.fillStyle = '#0d1117'; bctx.fillRect(0, 0, BW, BH);
+  const n = bProofs.length;
+  if (!n) return;
+
+  // Proof boxes at top
+  const pw = Math.min(48, (BW - 40) / n - 3), ph = 28, sx = 20, sy = 10;
+  for (let i = 0; i < n; i++) {
+    const x = sx + i * (pw + 3), p = bProofs[i];
+    const col = p.result === 'ok' ? '#3fb950' : p.result === 'fail' ? '#f85149' : p.checking ? '#bc8cff' : '#30363d';
+    bctx.fillStyle = col;
+    bctx.beginPath(); bctx.roundRect(x, sy, pw, ph, 4); bctx.fill();
+    // Bad indicator
+    if (p.bad) {
+      bctx.fillStyle = 'rgba(248,81,73,0.7)';
+      bctx.beginPath(); bctx.arc(x + pw / 2, sy + ph + 7, 3, 0, Math.PI * 2); bctx.fill();
+    }
+    // Index
+    bctx.fillStyle = (p.result || p.checking) ? '#0d1117' : '#e6edf3';
+    bctx.font = 'bold 11px system-ui'; bctx.textAlign = 'center';
+    bctx.fillText(i, x + pw / 2, sy + ph / 2 + 4);
+  }
+  bctx.textAlign = 'left';
+
+  // MSM counter
+  bctx.fillStyle = '#8b949e'; bctx.font = '10px system-ui';
+  bctx.fillText(`MSMs: ${bMsmCount}`, BW - 80, sy + 14);
+
+  // Tree
+  if (!bTreeNodes.length) return;
+  const treeY = sy + ph + 22;
+  const maxDepth = Math.max(...bTreeNodes.map(n => n.depth)) + 1;
+  const levelH = Math.min(42, (BH - treeY - 10) / maxDepth);
+
+  for (const node of bTreeNodes) {
+    const ny = treeY + node.depth * levelH;
+    const nw = Math.max(node.indices.length * (pw + 3) - 3, 24);
+    const nx = sx + node.indices[0] * (pw + 3);
+
+    // Box
+    const bg = node.status === 'ok' ? 'rgba(63,185,80,0.12)' : node.status === 'fail' ? 'rgba(248,81,73,0.12)' : node.status === 'checking' ? 'rgba(188,140,255,0.12)' : 'rgba(139,148,158,0.06)';
+    const border = node.status === 'ok' ? '#3fb950' : node.status === 'fail' ? '#f85149' : node.status === 'checking' ? '#bc8cff' : '#30363d';
+    bctx.fillStyle = bg;
+    bctx.beginPath(); bctx.roundRect(nx, ny, nw, levelH - 6, 4); bctx.fill();
+    bctx.strokeStyle = border; bctx.lineWidth = 1.5;
+    bctx.beginPath(); bctx.roundRect(nx, ny, nw, levelH - 6, 4); bctx.stroke();
+
+    // Label
+    const label = node.indices.length === 1 ? `proof ${node.indices[0]}` : `[${node.indices[0]}..${node.indices[node.indices.length - 1]}]`;
+    const statusLabel = node.status === 'ok' ? ' OK' : node.status === 'fail' ? ' FAIL' : node.status === 'checking' ? ' checking...' : '';
+    bctx.fillStyle = border; bctx.font = '10px system-ui'; bctx.textAlign = 'center';
+    bctx.fillText(label + statusLabel, nx + nw / 2, ny + (levelH - 6) / 2 + 4);
+
+    // Line to parent
+    if (node.parentIdx !== undefined) {
+      const pn = bTreeNodes[node.parentIdx];
+      const pnx = sx + pn.indices[0] * (pw + 3);
+      const pnw = Math.max(pn.indices.length * (pw + 3) - 3, 24);
+      const py = treeY + pn.depth * levelH + levelH - 6;
+      bctx.strokeStyle = '#30363d'; bctx.lineWidth = 1;
+      bctx.beginPath(); bctx.moveTo(pnx + pnw / 2, py); bctx.lineTo(nx + nw / 2, ny); bctx.stroke();
+    }
+  }
+  bctx.textAlign = 'left';
+}
+
+function bSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function runBisect() {
+  if (bRunning) return;
+  bRunning = true;
+  const n = +document.getElementById('bsN').value;
+  const nb = Math.min(+document.getElementById('bsBad').value, n);
+  bLog.innerHTML = ''; bTreeNodes = []; bMsmCount = 0;
+
+  // Pick random bad indices
+  const all = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [all[i], all[j]] = [all[j], all[i]]; }
+  const badSet = new Set(all.slice(0, nb));
+
+  bProofs = Array.from({ length: n }, (_, i) => ({ bad: badSet.has(i), result: null, checking: false }));
+  bDraw();
+
+  // Phase 1: Reduce
+  document.getElementById('bisectStatus').textContent = 'Phase 1: Parallel Reduce';
+  bAddLog(`Phase 1: Parallel reduce (${n} proofs)`, 'phase');
+  for (let i = 0; i < n; i++) {
+    bProofs[i].checking = true; bDraw(); await bSleep(40);
+    bProofs[i].checking = false;
+  }
+  await bSleep(200);
+
+  // Phase 2: Batch check
+  const indices = Array.from({ length: n }, (_, i) => i);
+  document.getElementById('bisectStatus').textContent = 'Phase 2: Batch IPA Check';
+  bAddLog(`Phase 2: batch_check([0..${n - 1}]) — 1 MSM`, 'phase');
+  bMsmCount++;
+  for (const i of indices) bProofs[i].checking = true;
+  bDraw(); await bSleep(500);
+  for (const i of indices) bProofs[i].checking = false;
+
+  const hasBad = indices.some(i => bProofs[i].bad);
+  if (!hasBad) {
+    for (const i of indices) bProofs[i].result = 'ok';
+    const rootNode = { indices, depth: 0, status: 'ok' };
+    bTreeNodes.push(rootNode);
+    bDraw();
+    bAddLog(`All ${n} proofs verified OK`, 'ok');
+    document.getElementById('bisectStatus').textContent = `Done — ${bMsmCount} MSM${bMsmCount > 1 ? 's' : ''}`;
+    bRunning = false;
+    return;
+  }
+
+  bAddLog(`Batch FAILED — entering bisection`, 'bisect');
+  document.getElementById('bisectStatus').textContent = 'Phase 3: Bisecting...';
+  const rootNode = { indices, depth: 0, status: 'fail' };
+  bTreeNodes.push(rootNode);
+  bDraw(); await bSleep(300);
+
+  await animBisect(indices, 0, 0);
+
+  document.getElementById('bisectStatus').textContent = `Done — ${bMsmCount} MSM${bMsmCount > 1 ? 's' : ''} total`;
+  bRunning = false;
+}
+
+async function animBisect(indices, depth, parentIdx) {
+  if (indices.length === 1) {
+    const i = indices[0];
+    bProofs[i].result = 'fail';
+    const ni = bTreeNodes.push({ indices, depth, status: 'fail', parentIdx }) - 1;
+    bDraw();
+    bAddLog(`${'  '.repeat(depth)}proof ${i}: FAILED (isolated)`, 'fail');
+    await bSleep(250);
+    return;
+  }
+
+  const mid = Math.floor(indices.length / 2);
+  const left = indices.slice(0, mid), right = indices.slice(mid);
+
+  // Check left
+  bAddLog(`${'  '.repeat(depth)}batch_check([${left[0]}..${left[left.length - 1]}]) — 1 MSM`, 'bisect');
+  bMsmCount++;
+  const leftNodeIdx = bTreeNodes.push({ indices: left, depth, status: 'checking', parentIdx }) - 1;
+  for (const i of left) bProofs[i].checking = true;
+  bDraw(); await bSleep(400);
+  for (const i of left) bProofs[i].checking = false;
+
+  const leftHasBad = left.some(i => bProofs[i].bad);
+
+  if (!leftHasBad) {
+    // Left OK — emit, recurse right (skip right check)
+    bTreeNodes[leftNodeIdx].status = 'ok';
+    for (const i of left) bProofs[i].result = 'ok';
+    bDraw();
+    bAddLog(`${'  '.repeat(depth)}left [${left[0]}..${left[left.length - 1]}]: OK — skip right check`, 'ok');
+    await bSleep(250);
+    await animBisect(right, depth + 1, parentIdx);
+  } else {
+    // Left failed — recurse left, then check right
+    bTreeNodes[leftNodeIdx].status = 'fail';
+    bDraw();
+    bAddLog(`${'  '.repeat(depth)}left [${left[0]}..${left[left.length - 1]}]: FAILED`, 'fail');
+    await bSleep(200);
+    await animBisect(left, depth + 1, leftNodeIdx);
+
+    // Now check right
+    bAddLog(`${'  '.repeat(depth)}batch_check([${right[0]}..${right[right.length - 1]}]) — 1 MSM`, 'bisect');
+    bMsmCount++;
+    const rightNodeIdx = bTreeNodes.push({ indices: right, depth, status: 'checking', parentIdx }) - 1;
+    for (const i of right) bProofs[i].checking = true;
+    bDraw(); await bSleep(400);
+    for (const i of right) bProofs[i].checking = false;
+
+    const rightHasBad = right.some(i => bProofs[i].bad);
+    if (!rightHasBad) {
+      bTreeNodes[rightNodeIdx].status = 'ok';
+      for (const i of right) bProofs[i].result = 'ok';
+      bDraw();
+      bAddLog(`${'  '.repeat(depth)}right [${right[0]}..${right[right.length - 1]}]: OK`, 'ok');
+      await bSleep(250);
+    } else {
+      bTreeNodes[rightNodeIdx].status = 'fail';
+      bDraw();
+      bAddLog(`${'  '.repeat(depth)}right [${right[0]}..${right[right.length - 1]}]: FAILED`, 'fail');
+      await bSleep(200);
+      await animBisect(right, depth + 1, rightNodeIdx);
+    }
+  }
+}
+
+bDraw();
 </script>
 </body>
 </html>
