@@ -68,10 +68,10 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <!-- INTERACTIVE EXPLORER -->
 <div class="sec">
 <h2>Interactive Performance Explorer</h2>
+<p style="font-size:11px;color:var(--m);margin-bottom:6px">Simulates the C++ coordinator loop with work-stealing reduce. Timings interpolated from real e2e app proof benchmarks. Assumes 0 bad proofs (happy path).</p>
 <div class="box" id="explorer">
-<div class="g" style="grid-template-columns:280px 1fr">
+<div class="g" style="grid-template-columns:240px 1fr">
 <div>
-<h3 style="margin-bottom:10px">Configuration</h3>
 <div class="slider-group">
 <label>Batch Size: <strong id="vBS">8</strong></label>
 <input type="range" id="sBS" min="1" max="30" value="8" oninput="update()">
@@ -84,22 +84,16 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <label>Worker Cores: <strong id="vCores">8</strong></label>
 <input type="range" id="sCores" min="1" max="32" value="8" oninput="update()">
 </div>
-<div class="slider-group">
-<label>Bad Proofs: <strong id="vBad">0</strong></label>
-<input type="range" id="sBad" min="0" max="10" value="0" oninput="update()">
-</div>
-<hr style="margin:12px 0">
+<hr style="margin:10px 0">
 <div id="metrics"></div>
 </div>
 <div>
-<canvas id="vizCanvas" width="760" height="280"></canvas>
+<canvas id="vizCanvas" width="760" height="320"></canvas>
 <div style="font-size:9px;color:var(--m);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">
-<span><span style="color:#79c0ff">&#9632;</span> Reduce (parallel)</span>
-<span><span style="color:#bc8cff">&#9632;</span> IPA batch check</span>
-<span><span style="color:#d29922">&#9632;</span> Bisection</span>
-<span><span style="color:#3fb950">&#9632;</span> OK emitted</span>
-<span><span style="color:#f85149">&#9632;</span> FAILED</span>
-<span><span style="color:#8b949e">&#9632;</span> Waiting in queue</span>
+<span><span style="color:#79c0ff">&#9632;</span> Worker reducing proof</span>
+<span><span style="color:#bc8cff">&#9632;</span> IPA batch MSM</span>
+<span><span style="color:#3fb950">&#9632;</span> Results emitted</span>
+<span style="color:var(--m)">&#124; dashed = first proof latency</span>
 </div>
 </div>
 </div>
@@ -108,16 +102,16 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 
 <!-- BISECTION ANIMATION -->
 <div class="sec">
-<h2>Bisection Animation</h2>
+<h2>Bisection</h2>
 <div class="box" id="bisectSim">
-<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-<button onclick="runBisect()" style="background:var(--a);color:var(--bg);border:none;padding:5px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">Run</button>
-<label style="font-size:11px;color:var(--m)">Proofs: <input type="range" id="bsN" min="4" max="16" value="8" oninput="bsNv.textContent=this.value" style="width:80px;accent-color:var(--a)"><strong id="bsNv" style="min-width:16px;display:inline-block;text-align:right">8</strong></label>
-<label style="font-size:11px;color:var(--m)">Bad: <input type="range" id="bsBad" min="1" max="6" value="2" oninput="bsBv.textContent=this.value" style="width:80px;accent-color:var(--a)"><strong id="bsBv" style="min-width:16px;display:inline-block;text-align:right">2</strong></label>
-<span id="bisectStatus" style="font-size:11px;color:var(--m);margin-left:auto"></span>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+<button onclick="runBisect()" style="background:var(--a);color:var(--bg);border:none;padding:4px 12px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">Run</button>
+<label style="font-size:10px;color:var(--m)">Proofs <input type="range" id="bsN" min="4" max="16" value="8" oninput="bsNv.textContent=this.value" style="width:60px;accent-color:var(--a)"><strong id="bsNv">8</strong></label>
+<label style="font-size:10px;color:var(--m)">Bad <input type="range" id="bsBad" min="1" max="4" value="1" oninput="bsBv.textContent=this.value" style="width:60px;accent-color:var(--a)"><strong id="bsBv">1</strong></label>
+<span id="bisectStatus" style="font-size:10px;color:var(--m);margin-left:auto"></span>
 </div>
-<canvas id="bisectCanvas" width="1060" height="340"></canvas>
-<div id="bisectLog" style="font-family:'SF Mono',monospace;font-size:10px;color:var(--m);max-height:100px;overflow-y:auto;margin-top:6px;padding:6px;background:rgba(0,0,0,.3);border-radius:4px"></div>
+<canvas id="bisectCanvas" width="1060" height="220"></canvas>
+<div id="bisectLog" style="font-family:'SF Mono',monospace;font-size:9px;color:var(--m);max-height:70px;overflow-y:auto;margin-top:4px;padding:4px;background:rgba(0,0,0,.3);border-radius:4px"></div>
 </div>
 </div>
 
@@ -283,64 +277,89 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div><!-- .page -->
 
 <script>
-// Real benchmark data points (measured with ecdsar1+transfer_0_recursions+sponsored_fpc, 83KB proof)
-// reduce_per_proof_ms = avg_verify - ipa_share; calibrated from real data
-const DATA = {
-  // Per-proof reduce time scales ~linearly with 1/cores (work-stealing)
-  reducePerProofAt8Cores: 10.5, // ms per proof with 8 cores (derived: 62ms avg - ~52ms IPA share)
-  // IPA batch check time (single MSM, scales sub-linearly with batch size)
-  ipaBaseMs: 8,        // fixed overhead per batch_check call
-  ipaPerProofMs: 4.5,  // marginal cost per proof in batch MSM
-  // Core scaling factor (from real data: 2c=508ms, 4c=297ms, 8c=187ms for 16 proofs)
-  coreScaling: (cores) => Math.max(1, 8 / Math.min(cores, 32)),
-  // Bisection: each level re-runs batch_check on half
-  bisectOverheadFactor: 1.03, // measured: +3% for 2/8 bad
-};
+// ── Calibrated from real benchmarks ──────────────────────────────────
+// Source: ecdsar1+transfer_0_recursions+sponsored_fpc (83KB proof, 2611 fields)
+// Measured: bs=2→67ms/batch, bs=4→86ms, bs=8→124ms, 16@8c→187ms (2 batches)
+// Derived: reduce_per_proof ≈ 30ms (single-threaded), ipaBase ≈ 18ms, ipaPerProof ≈ 9.5ms
+const REDUCE_PER_PROOF_1CORE = 30; // ms to reduce_to_ipa_claim for one proof on 1 core
+const IPA_BASE_MS = 18;            // fixed overhead per batch_check (SRS load, setup)
+const IPA_PER_PROOF_MS = 9.5;      // marginal MSM cost per proof in batch
 
-function model(batchSize, queueDepth, cores, numBad) {
+/**
+ * Simulate the C++ coordinator loop with work-stealing reduce.
+ * Returns a timeline of events for visualization.
+ */
+function simulate(batchSize, queueDepth, cores) {
   const n = queueDepth;
   const bs = Math.min(batchSize, n);
   const numBatches = Math.ceil(n / bs);
-  const coreScale = DATA.coreScaling(cores);
-  const actualBad = Math.min(numBad, n);
+  const numWorkers = Math.min(cores, 32);
+  const batches = []; // { startMs, reduceEndMs, ipaEndMs, workerEvents[] }
+  let clock = 0;
 
-  // Per-batch timing
-  const reduceMs = (bs * DATA.reducePerProofAt8Cores * coreScale) / Math.min(cores, bs);
-  const ipaMs = DATA.ipaBaseMs + DATA.ipaPerProofMs * bs;
+  for (let b = 0; b < numBatches; b++) {
+    const proofsInBatch = Math.min(bs, n - b * bs);
+    const batchStart = clock;
 
-  // Bisection cost per batch (if any bad proofs in that batch)
-  const bisectLevels = actualBad > 0 ? Math.ceil(Math.log2(bs)) : 0;
-  const bisectMs = bisectLevels * (DATA.ipaBaseMs + DATA.ipaPerProofMs * bs / 2);
+    // Work-stealing reduce: simulate atomic work_index
+    // Each worker grabs next proof, takes REDUCE_PER_PROOF_1CORE ms
+    const activeWorkers = Math.min(numWorkers, proofsInBatch);
+    const workerFinish = new Array(activeWorkers).fill(0); // relative to batchStart
+    const workerEvents = []; // { worker, proof, startMs, endMs }
 
-  // Total wall time
-  const batchMs = reduceMs + ipaMs;
-  const badBatches = actualBad > 0 ? Math.ceil(actualBad / bs) + (actualBad % bs > 0 ? 0 : 0) : 0;
-  const goodBatches = numBatches - Math.min(badBatches, numBatches);
-  const totalMs = goodBatches * batchMs + Math.min(badBatches, numBatches) * (batchMs + bisectMs);
+    let nextProof = 0;
+    // Initial assignment: each worker takes one proof
+    for (let w = 0; w < activeWorkers && nextProof < proofsInBatch; w++) {
+      workerFinish[w] = REDUCE_PER_PROOF_1CORE;
+      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: REDUCE_PER_PROOF_1CORE });
+      nextProof++;
+    }
+    // Work-stealing: when a worker finishes, it grabs the next proof
+    while (nextProof < proofsInBatch) {
+      // Find worker that finishes earliest
+      let minW = 0;
+      for (let w = 1; w < activeWorkers; w++) {
+        if (workerFinish[w] < workerFinish[minW]) minW = w;
+      }
+      const startT = workerFinish[minW];
+      workerFinish[minW] = startT + REDUCE_PER_PROOF_1CORE;
+      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + REDUCE_PER_PROOF_1CORE });
+      nextProof++;
+    }
 
-  // Max latency of the first proof in a batch (must wait for entire batch to complete)
-  const firstProofLatencyMs = batchMs;
+    const reduceEndMs = Math.max(...workerFinish);
+    const ipaMs = IPA_BASE_MS + IPA_PER_PROOF_MS * proofsInBatch;
+    const ipaEndMs = reduceEndMs + ipaMs;
 
-  // Sequential comparison
-  const seqMs = n * (DATA.reducePerProofAt8Cores * coreScale + DATA.ipaBaseMs + DATA.ipaPerProofMs);
+    batches.push({
+      index: b,
+      proofsInBatch,
+      startMs: batchStart,
+      reduceEndMs: batchStart + reduceEndMs,
+      ipaStartMs: batchStart + reduceEndMs,
+      ipaEndMs: batchStart + ipaEndMs,
+      reduceDuration: reduceEndMs,
+      ipaDuration: ipaMs,
+      workerEvents: workerEvents.map(e => ({
+        ...e, startMs: e.startMs + batchStart, endMs: e.endMs + batchStart
+      })),
+    });
+    clock = batchStart + ipaEndMs;
+  }
 
-  return {
-    n, bs, numBatches, cores,
-    reduceMs, ipaMs, bisectMs, batchMs,
-    totalMs, firstProofLatencyMs, seqMs,
-    throughput: (n / totalMs) * 1000,
-    avgLatencyMs: totalMs / numBatches,
-    speedup: seqMs / totalMs,
-  };
+  const totalMs = clock;
+  const seqMs = n * (REDUCE_PER_PROOF_1CORE + IPA_BASE_MS + IPA_PER_PROOF_MS);
+  const firstBatchMs = batches[0]?.ipaEndMs ?? 0;
+
+  return { batches, totalMs, n, bs, numBatches, cores: numWorkers, seqMs, firstBatchMs };
 }
 
 const VC = document.getElementById('vizCanvas'), vctx = VC.getContext('2d');
 let VW, VH, vdpr;
-
 function vresize() {
   vdpr = window.devicePixelRatio || 1;
   const r = VC.getBoundingClientRect();
-  VW = r.width; VH = 280;
+  VW = r.width; VH = 320;
   VC.width = VW * vdpr; VC.height = VH * vdpr;
   vctx.scale(vdpr, vdpr);
 }
@@ -350,140 +369,120 @@ function update() {
   const bs = +document.getElementById('sBS').value;
   const qd = +document.getElementById('sQD').value;
   const cores = +document.getElementById('sCores').value;
-  const bad = Math.min(+document.getElementById('sBad').value, qd);
   document.getElementById('vBS').textContent = bs;
   document.getElementById('vQD').textContent = qd;
   document.getElementById('vCores').textContent = cores;
-  document.getElementById('vBad').textContent = bad;
-  document.getElementById('sBad').max = qd;
 
-  const m = model(bs, qd, cores, bad);
+  const sim = simulate(bs, qd, cores);
 
-  // Metrics
   const me = document.getElementById('metrics');
+  const b0 = sim.batches[0];
   me.innerHTML = `
-    <div class="row"><span class="label">Total wall time</span><span class="val">${m.totalMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Throughput</span><span class="val highlight">${m.throughput.toFixed(1)} proofs/s</span></div>
-    <div class="row"><span class="label">Batches</span><span class="val">${m.numBatches} x ${m.bs}</span></div>
-    <div class="row"><span class="label">Per batch: reduce</span><span class="val">${m.reduceMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Per batch: IPA MSM</span><span class="val">${m.ipaMs.toFixed(0)}ms</span></div>
-    ${bad > 0 ? `<div class="row"><span class="label">Bisection overhead</span><span class="val warn">+${m.bisectMs.toFixed(0)}ms</span></div>` : ''}
-    <div class="row"><span class="label">First proof max latency</span><span class="val">${m.firstProofLatencyMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Sequential baseline</span><span class="val">${m.seqMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Speedup</span><span class="val highlight">${m.speedup.toFixed(1)}x</span></div>
+    <div class="row"><span class="label">Total wall time</span><span class="val">${sim.totalMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Throughput</span><span class="val highlight">${((sim.n / sim.totalMs) * 1000).toFixed(1)} proofs/s</span></div>
+    <div class="row"><span class="label">Batches</span><span class="val">${sim.numBatches} x ${sim.bs}</span></div>
+    <div class="row"><span class="label">Reduce (batch 0)</span><span class="val">${b0 ? b0.reduceDuration.toFixed(0) : 0}ms</span></div>
+    <div class="row"><span class="label">IPA MSM (batch 0)</span><span class="val">${b0 ? b0.ipaDuration.toFixed(0) : 0}ms</span></div>
+    <div class="row"><span class="label">First proof latency</span><span class="val">${sim.firstBatchMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Sequential baseline</span><span class="val">${sim.seqMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Speedup</span><span class="val highlight">${(sim.seqMs / sim.totalMs).toFixed(1)}x</span></div>
   `;
 
-  drawViz(m, bs, qd, cores, bad);
+  drawViz(sim);
 }
 
-function drawViz(m, bs, qd, cores, bad) {
+function drawViz(sim) {
   vctx.clearRect(0, 0, VW, VH);
   vctx.fillStyle = '#0d1117'; vctx.fillRect(0, 0, VW, VH);
 
-  const pad = 16, timelineY = 40, laneH = 22, proofH = 16;
-  const maxTime = Math.max(m.totalMs * 1.1, 50);
-  const scale = (VW - pad * 2 - 80) / maxTime;
-  const lx = pad + 70; // left edge of timeline
-
-  // Time axis
-  vctx.strokeStyle = '#30363d'; vctx.lineWidth = 1;
-  vctx.beginPath(); vctx.moveTo(lx, VH - 20); vctx.lineTo(VW - pad, VH - 20); vctx.stroke();
-  vctx.fillStyle = '#8b949e'; vctx.font = '9px system-ui';
-  const step = maxTime > 500 ? 100 : maxTime > 200 ? 50 : maxTime > 100 ? 25 : 10;
-  for (let t = 0; t <= maxTime; t += step) {
-    const x = lx + t * scale;
-    vctx.fillText(`${t}ms`, x - 10, VH - 8);
-    vctx.strokeStyle = 'rgba(48,54,61,0.5)';
-    vctx.beginPath(); vctx.moveTo(x, timelineY - 5); vctx.lineTo(x, VH - 22); vctx.stroke();
-  }
-
-  // Draw batches as lanes
-  let t = 0;
-  const batchCount = m.numBatches;
-  const actualBs = m.bs;
-
-  for (let b = 0; b < batchCount; b++) {
-    const y = timelineY + b * laneH;
-    const proofsInBatch = Math.min(actualBs, qd - b * actualBs);
-    const hasBad = bad > 0 && b < Math.ceil(bad / actualBs);
-
-    // Label
-    vctx.fillStyle = '#8b949e'; vctx.font = '9px system-ui';
-    vctx.fillText(`batch ${b}`, pad, y + proofH / 2 + 3);
-
-    // Reduce phase
-    const rx = lx + t * scale;
-    const rw = m.reduceMs * scale;
-    vctx.fillStyle = 'rgba(121,192,255,0.25)';
-    vctx.beginPath(); vctx.roundRect(rx, y, rw, proofH, 2); vctx.fill();
-    vctx.strokeStyle = '#79c0ff'; vctx.lineWidth = 1;
-    vctx.beginPath(); vctx.roundRect(rx, y, rw, proofH, 2); vctx.stroke();
-
-    // Worker stripes inside reduce
-    const wCount = Math.min(cores, proofsInBatch);
-    const stripeW = rw / proofsInBatch;
-    for (let p = 0; p < proofsInBatch; p++) {
-      const sx = rx + p * stripeW;
-      const isBadProof = hasBad && p < (bad - b * actualBs);
-      vctx.fillStyle = isBadProof ? 'rgba(248,81,73,0.3)' : 'rgba(121,192,255,0.15)';
-      vctx.fillRect(sx + 0.5, y + 1, stripeW - 1, proofH - 2);
-    }
-
-    if (rw > 30) {
-      vctx.fillStyle = '#79c0ff'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
-      vctx.fillText(`reduce ${m.reduceMs.toFixed(0)}ms`, rx + rw / 2, y + proofH / 2 + 3);
-      vctx.textAlign = 'left';
-    }
-
-    // IPA phase
-    const ix = rx + rw;
-    const iw = m.ipaMs * scale;
-    vctx.fillStyle = 'rgba(188,140,255,0.25)';
-    vctx.beginPath(); vctx.roundRect(ix, y, iw, proofH, 2); vctx.fill();
-    vctx.strokeStyle = '#bc8cff'; vctx.lineWidth = 1;
-    vctx.beginPath(); vctx.roundRect(ix, y, iw, proofH, 2); vctx.stroke();
-    if (iw > 25) {
-      vctx.fillStyle = '#bc8cff'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
-      vctx.fillText(`IPA ${m.ipaMs.toFixed(0)}ms`, ix + iw / 2, y + proofH / 2 + 3);
-      vctx.textAlign = 'left';
-    }
-
-    // Bisection phase (if bad proofs in this batch)
-    if (hasBad && m.bisectMs > 0) {
-      const bx = ix + iw;
-      const bw = m.bisectMs * scale;
-      vctx.fillStyle = 'rgba(210,153,34,0.25)';
-      vctx.beginPath(); vctx.roundRect(bx, y, bw, proofH, 2); vctx.fill();
-      vctx.strokeStyle = '#d29922'; vctx.lineWidth = 1;
-      vctx.beginPath(); vctx.roundRect(bx, y, bw, proofH, 2); vctx.stroke();
-      if (bw > 20) {
-        vctx.fillStyle = '#d29922'; vctx.font = '8px system-ui'; vctx.textAlign = 'center';
-        vctx.fillText(`bisect`, bx + bw / 2, y + proofH / 2 + 3);
-        vctx.textAlign = 'left';
-      }
-      t += m.reduceMs + m.ipaMs + m.bisectMs;
-    } else {
-      // Result marker
-      const ex = ix + iw + 2;
-      vctx.fillStyle = '#3fb950'; vctx.font = 'bold 9px system-ui';
-      vctx.fillText('OK', ex, y + proofH / 2 + 3);
-      t += m.reduceMs + m.ipaMs;
-    }
-  }
+  const pad = 12, topY = 28;
+  const workerLaneH = Math.min(18, (VH - topY - 40) / (sim.cores + 2));
+  const maxTime = Math.max(sim.totalMs * 1.08, 20);
+  const lx = pad + 52;
+  const scale = (VW - lx - pad) / maxTime;
 
   // Title
   vctx.fillStyle = '#e6edf3'; vctx.font = 'bold 11px system-ui';
-  vctx.fillText(`${qd} proofs in ${batchCount} batch${batchCount > 1 ? 'es' : ''} — ${m.totalMs.toFixed(0)}ms total`, pad, 20);
+  vctx.fillText(`${sim.n} proofs, ${sim.numBatches} batch${sim.numBatches > 1 ? 'es' : ''} of ${sim.bs}, ${sim.cores} cores — ${sim.totalMs.toFixed(0)}ms`, pad, 16);
 
-  // First proof max latency marker
-  const wlx = lx + m.firstProofLatencyMs * scale;
-  if (wlx < VW - pad) {
-    vctx.strokeStyle = 'rgba(248,81,73,0.5)'; vctx.setLineDash([3, 3]);
-    vctx.beginPath(); vctx.moveTo(wlx, timelineY - 5); vctx.lineTo(wlx, VH - 22); vctx.stroke();
-    vctx.setLineDash([]);
-    vctx.fillStyle = '#f85149'; vctx.font = '8px system-ui';
-    vctx.fillText(`first proof latency: ${m.firstProofLatencyMs.toFixed(0)}ms`, wlx + 3, timelineY - 8);
+  // Time axis
+  vctx.strokeStyle = '#30363d'; vctx.lineWidth = 0.5;
+  const step = maxTime > 400 ? 100 : maxTime > 200 ? 50 : maxTime > 80 ? 20 : 10;
+  for (let t = 0; t <= maxTime; t += step) {
+    const x = lx + t * scale;
+    vctx.fillStyle = '#8b949e'; vctx.font = '8px system-ui';
+    vctx.fillText(`${t}`, x - 6, VH - 4);
+    vctx.beginPath(); vctx.moveTo(x, topY - 2); vctx.lineTo(x, VH - 14); vctx.stroke();
   }
+
+  // Worker lanes
+  for (let w = 0; w < sim.cores; w++) {
+    const y = topY + w * workerLaneH;
+    vctx.fillStyle = '#8b949e'; vctx.font = '8px system-ui';
+    vctx.fillText(`w${w}`, pad, y + workerLaneH / 2 + 3);
+  }
+
+  // Draw worker events (reduce blocks)
+  const colors = ['rgba(121,192,255,0.5)', 'rgba(121,192,255,0.35)', 'rgba(121,192,255,0.5)', 'rgba(121,192,255,0.35)'];
+  for (const batch of sim.batches) {
+    for (const ev of batch.workerEvents) {
+      const y = topY + ev.worker * workerLaneH;
+      const x = lx + ev.startMs * scale;
+      const w = (ev.endMs - ev.startMs) * scale;
+      const batchColor = batch.index % 2 === 0 ? 'rgba(121,192,255,0.45)' : 'rgba(121,192,255,0.3)';
+      vctx.fillStyle = batchColor;
+      vctx.beginPath(); vctx.roundRect(x, y + 1, Math.max(w - 0.5, 1), workerLaneH - 2, 2); vctx.fill();
+      vctx.strokeStyle = '#79c0ff'; vctx.lineWidth = 0.5;
+      vctx.beginPath(); vctx.roundRect(x, y + 1, Math.max(w - 0.5, 1), workerLaneH - 2, 2); vctx.stroke();
+      // Proof index label
+      if (w > 14) {
+        vctx.fillStyle = '#e6edf3'; vctx.font = '7px monospace'; vctx.textAlign = 'center';
+        vctx.fillText(ev.proof, x + w / 2, y + workerLaneH / 2 + 2);
+        vctx.textAlign = 'left';
+      }
+    }
+  }
+
+  // IPA MSM lane (below workers)
+  const ipaY = topY + sim.cores * workerLaneH + 4;
+  vctx.fillStyle = '#8b949e'; vctx.font = '8px system-ui';
+  vctx.fillText('IPA', pad, ipaY + workerLaneH / 2 + 3);
+
+  for (const batch of sim.batches) {
+    const x = lx + batch.ipaStartMs * scale;
+    const w = batch.ipaDuration * scale;
+    vctx.fillStyle = 'rgba(188,140,255,0.35)';
+    vctx.beginPath(); vctx.roundRect(x, ipaY + 1, w, workerLaneH - 2, 2); vctx.fill();
+    vctx.strokeStyle = '#bc8cff'; vctx.lineWidth = 1;
+    vctx.beginPath(); vctx.roundRect(x, ipaY + 1, w, workerLaneH - 2, 2); vctx.stroke();
+    if (w > 20) {
+      vctx.fillStyle = '#bc8cff'; vctx.font = '7px system-ui'; vctx.textAlign = 'center';
+      vctx.fillText(`${batch.ipaDuration.toFixed(0)}ms`, x + w / 2, ipaY + workerLaneH / 2 + 2);
+      vctx.textAlign = 'left';
+    }
+    // OK marker
+    const okX = lx + batch.ipaEndMs * scale + 2;
+    vctx.fillStyle = '#3fb950'; vctx.font = 'bold 8px system-ui';
+    vctx.fillText('OK', okX, ipaY + workerLaneH / 2 + 2);
+  }
+
+  // Batch separators
+  for (const batch of sim.batches) {
+    if (batch.index > 0) {
+      const x = lx + batch.startMs * scale;
+      vctx.strokeStyle = 'rgba(48,54,61,0.8)'; vctx.lineWidth = 1; vctx.setLineDash([2, 2]);
+      vctx.beginPath(); vctx.moveTo(x, topY - 2); vctx.lineTo(x, ipaY + workerLaneH); vctx.stroke();
+      vctx.setLineDash([]);
+    }
+  }
+
+  // First proof latency marker
+  const flx = lx + sim.firstBatchMs * scale;
+  vctx.strokeStyle = 'rgba(248,81,73,0.6)'; vctx.lineWidth = 1; vctx.setLineDash([3, 3]);
+  vctx.beginPath(); vctx.moveTo(flx, topY - 2); vctx.lineTo(flx, ipaY + workerLaneH); vctx.stroke();
+  vctx.setLineDash([]);
+  vctx.fillStyle = '#f85149'; vctx.font = '8px system-ui';
+  vctx.fillText(`first proof: ${sim.firstBatchMs.toFixed(0)}ms`, flx + 3, topY - 6);
 }
 
 vresize(); update();
@@ -495,7 +494,7 @@ let BW, BH, bdpr;
 function bresize() {
   bdpr = window.devicePixelRatio || 1;
   const r = BC.getBoundingClientRect();
-  BW = r.width; BH = 340;
+  BW = r.width; BH = 220;
   BC.width = BW * bdpr; BC.height = BH * bdpr;
   bctx.scale(bdpr, bdpr);
 }
@@ -519,7 +518,7 @@ function bDraw() {
   if (!n) return;
 
   // Proof boxes at top
-  const pw = Math.min(48, (BW - 40) / n - 3), ph = 28, sx = 20, sy = 10;
+  const pw = Math.min(36, (BW - 40) / n - 2), ph = 20, sx = 16, sy = 6;
   for (let i = 0; i < n; i++) {
     const x = sx + i * (pw + 3), p = bProofs[i];
     const col = p.result === 'ok' ? '#3fb950' : p.result === 'fail' ? '#f85149' : p.checking ? '#bc8cff' : '#30363d';
@@ -543,9 +542,9 @@ function bDraw() {
 
   // Tree
   if (!bTreeNodes.length) return;
-  const treeY = sy + ph + 22;
+  const treeY = sy + ph + 16;
   const maxDepth = Math.max(...bTreeNodes.map(n => n.depth)) + 1;
-  const levelH = Math.min(42, (BH - treeY - 10) / maxDepth);
+  const levelH = Math.min(30, (BH - treeY - 6) / maxDepth);
 
   for (const node of bTreeNodes) {
     const ny = treeY + node.depth * levelH;
@@ -611,7 +610,7 @@ async function runBisect() {
   bAddLog(`Phase 2: batch_check([0..${n - 1}]) — 1 MSM`, 'phase');
   bMsmCount++;
   for (const i of indices) bProofs[i].checking = true;
-  bDraw(); await bSleep(500);
+  bDraw(); await bSleep(200);
   for (const i of indices) bProofs[i].checking = false;
 
   const hasBad = indices.some(i => bProofs[i].bad);
@@ -630,7 +629,7 @@ async function runBisect() {
   document.getElementById('bisectStatus').textContent = 'Phase 3: Bisecting...';
   const rootNode = { indices, depth: 0, status: 'fail' };
   bTreeNodes.push(rootNode);
-  bDraw(); await bSleep(300);
+  bDraw(); await bSleep(200);
 
   await animBisect(indices, 0, 0);
 
@@ -645,7 +644,7 @@ async function animBisect(indices, depth, parentIdx) {
     const ni = bTreeNodes.push({ indices, depth, status: 'fail', parentIdx }) - 1;
     bDraw();
     bAddLog(`${'  '.repeat(depth)}proof ${i}: FAILED (isolated)`, 'fail');
-    await bSleep(250);
+    await bSleep(180);
     return;
   }
 
@@ -657,7 +656,7 @@ async function animBisect(indices, depth, parentIdx) {
   bMsmCount++;
   const leftNodeIdx = bTreeNodes.push({ indices: left, depth, status: 'checking', parentIdx }) - 1;
   for (const i of left) bProofs[i].checking = true;
-  bDraw(); await bSleep(400);
+  bDraw(); await bSleep(180);
   for (const i of left) bProofs[i].checking = false;
 
   const leftHasBad = left.some(i => bProofs[i].bad);
@@ -668,7 +667,7 @@ async function animBisect(indices, depth, parentIdx) {
     for (const i of left) bProofs[i].result = 'ok';
     bDraw();
     bAddLog(`${'  '.repeat(depth)}left [${left[0]}..${left[left.length - 1]}]: OK — skip right check`, 'ok');
-    await bSleep(250);
+    await bSleep(180);
     await animBisect(right, depth + 1, parentIdx);
   } else {
     // Left failed — recurse left, then check right
@@ -683,7 +682,7 @@ async function animBisect(indices, depth, parentIdx) {
     bMsmCount++;
     const rightNodeIdx = bTreeNodes.push({ indices: right, depth, status: 'checking', parentIdx }) - 1;
     for (const i of right) bProofs[i].checking = true;
-    bDraw(); await bSleep(400);
+    bDraw(); await bSleep(180);
     for (const i of right) bProofs[i].checking = false;
 
     const rightHasBad = right.some(i => bProofs[i].bad);
@@ -692,7 +691,7 @@ async function animBisect(indices, depth, parentIdx) {
       for (const i of right) bProofs[i].result = 'ok';
       bDraw();
       bAddLog(`${'  '.repeat(depth)}right [${right[0]}..${right[right.length - 1]}]: OK`, 'ok');
-      await bSleep(250);
+      await bSleep(180);
     } else {
       bTreeNodes[rightNodeIdx].status = 'fail';
       bDraw();
