@@ -428,21 +428,21 @@ function simulate(batchSize, queueDepth, cores) {
     const proofsInBatch = Math.min(bs, n - b * bs);
     const batchStart = clock;
 
-    // Use real measured wall time for this (bs, cores) combo
+    // Real measured times from C++ chonk_bench
     const measuredWall = lookupWall(proofsInBatch, cores);
     const measuredIpa = ipaPhaseMs(proofsInBatch, cores);
-    const reduceDuration = Math.max(measuredWall - measuredIpa, proofsInBatch * 2);
+    // Real per-proof reduce: 15ms from C++ avg_reduce_ms (constant across all configs)
+    const REAL_REDUCE_PER_PROOF = 15;
 
-    // Build work-stealing timeline for visualization
+    // Work-stealing: each worker grabs next proof (15ms each), exactly as in C++
     const activeWorkers = Math.min(numWorkers, proofsInBatch);
-    const perProofReduce = reduceDuration / Math.ceil(proofsInBatch / activeWorkers);
     const workerFinish = new Array(activeWorkers).fill(0);
     const workerEvents = [];
 
     let nextProof = 0;
     for (let w = 0; w < activeWorkers && nextProof < proofsInBatch; w++) {
-      workerFinish[w] = perProofReduce;
-      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: perProofReduce });
+      workerFinish[w] = REAL_REDUCE_PER_PROOF;
+      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: REAL_REDUCE_PER_PROOF });
       nextProof++;
     }
     while (nextProof < proofsInBatch) {
@@ -451,23 +451,31 @@ function simulate(batchSize, queueDepth, cores) {
         if (workerFinish[w] < workerFinish[minW]) minW = w;
       }
       const startT = workerFinish[minW];
-      workerFinish[minW] = startT + perProofReduce;
-      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + perProofReduce });
+      workerFinish[minW] = startT + REAL_REDUCE_PER_PROOF;
+      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + REAL_REDUCE_PER_PROOF });
       nextProof++;
     }
+
+    const reduceDuration = Math.max(...workerFinish);
+
+    // Use the real measured wall for total batch time
+    // but show the real reduce (from work-stealing sim) and real IPA separately
+    const batchEndMs = batchStart + measuredWall;
 
     batches.push({
       index: b, proofsInBatch,
       startMs: batchStart,
       reduceEndMs: batchStart + reduceDuration,
       ipaStartMs: batchStart + reduceDuration,
-      ipaEndMs: batchStart + measuredWall,
-      reduceDuration, ipaDuration: measuredIpa,
+      ipaEndMs: batchEndMs,
+      reduceDuration,
+      ipaDuration: measuredIpa,
+      measuredWall,
       workerEvents: workerEvents.map(e => ({
         ...e, startMs: e.startMs + batchStart, endMs: e.endMs + batchStart
       })),
     });
-    clock = batchStart + measuredWall;
+    clock = batchEndMs;
   }
 
   const totalMs = clock;
@@ -518,12 +526,15 @@ function update() {
 
   const me = document.getElementById('metrics');
   const b0 = sim.batches[0];
+  const reducePerProof = 15;
+  const rounds = b0 ? Math.ceil(b0.proofsInBatch / Math.min(cores, b0.proofsInBatch)) : 0;
   me.innerHTML = `
-    <div class="row"><span class="label">Total wall time</span><span class="val">${sim.totalMs.toFixed(0)}ms</span></div>
+    <div class="row"><span class="label">Total wall (measured)</span><span class="val">${sim.totalMs.toFixed(0)}ms</span></div>
     <div class="row"><span class="label">Throughput</span><span class="val highlight">${((sim.n / sim.totalMs) * 1000).toFixed(1)} proofs/s</span></div>
-    <div class="row"><span class="label">Batches</span><span class="val">${sim.numBatches} x ${sim.bs}</span></div>
-    <div class="row"><span class="label">Reduce (batch 0)</span><span class="val">${b0 ? b0.reduceDuration.toFixed(0) : 0}ms</span></div>
-    <div class="row"><span class="label">IPA MSM (batch 0)</span><span class="val">${b0 ? b0.ipaDuration.toFixed(0) : 0}ms</span></div>
+    <div class="row"><span class="label">Batches</span><span class="val">${sim.numBatches} × ${sim.bs}</span></div>
+    <div class="row"><span class="label">Reduce/proof</span><span class="val">${reducePerProof}ms × ${rounds} round${rounds>1?'s':''} = ${b0 ? b0.reduceDuration.toFixed(0) : 0}ms</span></div>
+    <div class="row"><span class="label">IPA MSM (measured)</span><span class="val">${b0 ? b0.ipaDuration.toFixed(0) : 0}ms</span></div>
+    <div class="row"><span class="label">Overhead</span><span class="val">${b0 ? (b0.measuredWall - b0.reduceDuration - b0.ipaDuration).toFixed(0) : 0}ms</span></div>
     <div class="row"><span class="label">First proof latency</span><span class="val">${sim.firstBatchMs.toFixed(0)}ms</span></div>
   `;
 
@@ -573,8 +584,12 @@ function drawViz(sim) {
       vctx.beginPath(); vctx.roundRect(x, y + 1, Math.max(w - 0.5, 1), workerLaneH - 2, 2); vctx.fill();
       vctx.strokeStyle = '#79c0ff'; vctx.lineWidth = 0.5;
       vctx.beginPath(); vctx.roundRect(x, y + 1, Math.max(w - 0.5, 1), workerLaneH - 2, 2); vctx.stroke();
-      // Proof index label
-      if (w > 14) {
+      // Proof index + real timing label
+      if (w > 20) {
+        vctx.fillStyle = '#e6edf3'; vctx.font = '7px monospace'; vctx.textAlign = 'center';
+        vctx.fillText(`${ev.proof} (15ms)`, x + w / 2, y + workerLaneH / 2 + 2);
+        vctx.textAlign = 'left';
+      } else if (w > 8) {
         vctx.fillStyle = '#e6edf3'; vctx.font = '7px monospace'; vctx.textAlign = 'center';
         vctx.fillText(ev.proof, x + w / 2, y + workerLaneH / 2 + 2);
         vctx.textAlign = 'left';
