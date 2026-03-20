@@ -73,21 +73,20 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <div class="g" style="grid-template-columns:240px 1fr">
 <div>
 <div class="slider-group">
-<label>Batch Size</label>
+<label>Worker Cores</label>
+<select id="sCores" onchange="updateBsOptions();update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
+<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="6" selected>6</option><option value="8">8</option>
+</select>
+</div>
+<div class="slider-group">
+<label>Batch Size <span style="font-size:9px;color:var(--m)">(multiples of cores)</span></label>
 <select id="sBS" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
-<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16" selected>16</option>
 </select>
 </div>
 <div class="slider-group">
 <label>Queue Depth</label>
 <select id="sQD" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
-<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16" selected>16</option><option value="32">32</option>
-</select>
-</div>
-<div class="slider-group">
-<label>Worker Cores</label>
-<select id="sCores" onchange="update()" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:4px;padding:3px 6px;font-size:11px;width:100%">
-<option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="16">16</option>
+<option value="6">6</option><option value="12">12</option><option value="18" selected>18</option><option value="24">24</option><option value="30">30</option>
 </select>
 </div>
 <hr style="margin:10px 0">
@@ -127,27 +126,31 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <p style="font-size:11px;color:var(--m);margin-bottom:8px">From C++ <code>chonk_bench BatchVerify</code> using test-circuit proofs (small gates). Phase breakdown from <code>VerifyResult.reduce_ms</code> / <code>ipa_ms</code> fields. Production proofs are larger but the IPA scaling pattern holds.</p>
 <div class="g">
 <div class="box">
-<h3>Phase Breakdown — from C++ chonk_bench (batch_size x cores)</h3>
+<h3>IPA MSM time (ms) — from C++ chonk_bench</h3>
 <table>
-<tr><th></th><th colspan="5" style="text-align:center">IPA MSM time (ms)</th></tr>
 <tr><th>bs \ cores</th><th>1</th><th>2</th><th>4</th><th>6</th><th>8</th></tr>
-<tr><td>1</td><td>166</td><td>94</td><td>55</td><td>40</td><td>32</td></tr>
-<tr><td>4</td><td>166</td><td>96</td><td>54</td><td>41</td><td>32</td></tr>
-<tr><td>8</td><td>173</td><td>101</td><td>58</td><td>44</td><td>36</td></tr>
-<tr><td>16</td><td>195</td><td>119</td><td>70</td><td class="warn">57</td><td>52</td></tr>
+<tr><td>1</td><td>164</td><td>96</td><td>53</td><td>40</td><td>40</td></tr>
+<tr><td>6</td><td>172</td><td>97</td><td>—</td><td>40</td><td>—</td></tr>
+<tr><td>8</td><td>—</td><td>103</td><td>63</td><td>48</td><td>40</td></tr>
+<tr><td>12</td><td>—</td><td>112</td><td>65</td><td>48</td><td>—</td></tr>
+<tr><td>16</td><td>—</td><td>—</td><td>72</td><td class="warn">59</td><td>50</td></tr>
+<tr><td>18</td><td>—</td><td>—</td><td>—</td><td class="warn">59</td><td>—</td></tr>
+<tr><td>24</td><td>—</td><td>—</td><td>86</td><td>66</td><td>57</td></tr>
+<tr><td>30</td><td>—</td><td>—</td><td>—</td><td>84</td><td>—</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Reduce is constant at <strong>~15ms/proof</strong> (single-threaded per worker). IPA scales with both cores (pippenger parallelism) and batch size (more claims in MSM). At 6 cores (default): IPA goes from 40ms (bs=1) to 57ms (bs=16) — a 42% increase for 16x the proofs.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Reduce is constant at <strong>~15ms/proof</strong>. IPA scales with both cores and batch size. All batch sizes are multiples of cores for even work distribution. At 6 cores (default): bs=6→40ms, bs=18→59ms, bs=30→84ms.</p>
 </div>
 <div class="box">
-<h3>Wall Time — from C++ chonk_bench (ms)</h3>
+<h3>Wall Time (ms) — multiples of cores only</h3>
 <table>
 <tr><th>bs \ cores</th><th>1</th><th>2</th><th>4</th><th>6</th><th>8</th></tr>
-<tr><td>1</td><td>182</td><td>111</td><td>71</td><td>57</td><td>49</td></tr>
-<tr><td>4</td><td>391</td><td>237</td><td>139</td><td>117</td><td>96</td></tr>
-<tr><td>8</td><td>465</td><td>261</td><td>161</td><td>131</td><td>103</td></tr>
-<tr><td>16</td><td>607</td><td>339</td><td>207</td><td class="warn">160</td><td>136</td></tr>
+<tr><td>1×</td><td>181</td><td>113</td><td>138</td><td>113</td><td>112</td></tr>
+<tr><td>2×</td><td>199</td><td>258</td><td>168</td><td>137</td><td>136</td></tr>
+<tr><td>3×</td><td>373</td><td>240</td><td>188</td><td class="warn">164</td><td>155</td></tr>
+<tr><td>4×</td><td>390</td><td>265</td><td>208</td><td>186</td><td>—</td></tr>
+<tr><td>5×</td><td>412</td><td>283</td><td>253</td><td>220</td><td>—</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">At default 6 cores: single proof = 57ms, batch of 16 = 160ms (2.8x for 16 proofs). Throughput: <strong class="good">100 proofs/sec</strong> at 6 cores with bs=16.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">At default 6 cores, 3× (bs=18): <strong class="warn">164ms</strong> wall, ~110 proofs/sec. Single proof: 113ms. The sweet spot balances latency (first proof waits for batch) vs throughput (amortized IPA).</p>
 </div>
 </div>
 <div class="g" style="margin-top:0">
@@ -381,28 +384,39 @@ function reducePhaseMs(bs, cores) {
   return rounds * REDUCE_PER_PROOF;
 }
 
-// IPA MSM measured from C++ google benchmark (chonk_bench BatchVerify).
-// Scales with both cores (pippenger parallelism) AND batch size (more claims in MSM).
-// Direct lookup: IPA_DATA[bs][cores] = ms
-const IPA_DATA = {
-  1:  {1:166, 2:94, 4:55, 6:40, 8:32},
-  4:  {1:166, 2:96, 4:54, 6:41, 8:32},
-  8:  {1:173, 2:101, 4:58, 6:44, 8:36},
-  16: {1:195, 2:119, 4:70, 6:57, 8:52},
+// Complete measured data from C++ chonk_bench BatchVerify.
+// WALL[bs][cores] = wall time in ms. IPA[bs][cores] = IPA MSM time in ms.
+// All batch sizes are multiples of their core count for even work distribution.
+// Reduce is constant at ~15ms/proof regardless of config.
+const WALL = {
+  1:{1:181,2:113,4:138,6:113,8:112}, 2:{1:199,2:113,4:138,6:113,8:112},
+  3:{1:373}, 4:{1:390,2:258,4:138,6:113,8:112}, 5:{1:412},
+  6:{1:430,2:240,4:138,6:113,8:112}, 8:{2:265,4:168,6:137,8:112},
+  10:{2:283}, 12:{2:304,4:188,6:137,8:155}, 16:{4:208,6:164,8:136},
+  18:{6:164}, 20:{4:253}, 24:{4:251,6:186,8:155}, 30:{6:220},
+};
+const IPA = {
+  1:{1:164,2:96,4:53,6:40,8:40}, 2:{1:168,2:96,4:53,6:40,8:40},
+  3:{1:163}, 4:{1:164,2:106,4:53,6:40,8:40}, 5:{1:169},
+  6:{1:172,2:97,4:53,6:40,8:40}, 8:{2:103,4:63,6:48,8:40},
+  10:{2:107}, 12:{2:112,4:65,6:48,8:57}, 16:{4:72,6:59,8:50},
+  18:{6:59}, 20:{4:89}, 24:{4:86,6:66,8:57}, 30:{6:84},
 };
 function ipaPhaseMs(bs, cores) {
-  // Find closest measured batch size
-  const sizes = [1, 4, 8, 16];
-  let lo = sizes[0], hi = sizes[sizes.length - 1];
-  for (const s of sizes) { if (s <= bs) lo = s; }
-  for (let i = sizes.length - 1; i >= 0; i--) { if (sizes[i] >= bs) hi = sizes[i]; }
-  const loData = IPA_DATA[lo] || IPA_DATA[8];
-  const hiData = IPA_DATA[hi] || IPA_DATA[8];
-  // Interpolate on batch size
-  const frac = lo === hi ? 0 : (bs - lo) / (hi - lo);
-  const loVal = loData[cores] || loData[4] * Math.sqrt(4 / cores);
-  const hiVal = hiData[cores] || hiData[4] * Math.sqrt(4 / cores);
-  return loVal + frac * (hiVal - loVal);
+  // Direct lookup, fall back to interpolation
+  if (IPA[bs] && IPA[bs][cores]) return IPA[bs][cores];
+  // Find closest measured batch sizes for this core count
+  const measured = Object.keys(IPA).map(Number).filter(b => IPA[b][cores]).sort((a,b) => a - b);
+  if (!measured.length) return 50; // fallback
+  if (bs <= measured[0]) return IPA[measured[0]][cores];
+  if (bs >= measured[measured.length-1]) return IPA[measured[measured.length-1]][cores];
+  for (let i = 0; i < measured.length - 1; i++) {
+    if (bs >= measured[i] && bs <= measured[i+1]) {
+      const f = (bs - measured[i]) / (measured[i+1] - measured[i]);
+      return IPA[measured[i]][cores] + f * (IPA[measured[i+1]][cores] - IPA[measured[i]][cores]);
+    }
+  }
+  return 50;
 }
 
 /**
@@ -600,7 +614,23 @@ function drawViz(sim) {
   vctx.fillText(`first proof: ${sim.firstBatchMs.toFixed(0)}ms`, flx + 3, topY - 6);
 }
 
-vresize(); update();
+function updateBsOptions() {
+  const cores = +document.getElementById('sCores').value;
+  const sel = document.getElementById('sBS');
+  const prev = +sel.value;
+  sel.innerHTML = '';
+  for (let mult = 1; mult <= 6; mult++) {
+    const bs = cores * mult;
+    if (bs > 30) break;
+    const opt = document.createElement('option');
+    opt.value = bs; opt.textContent = bs;
+    if (bs === prev) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  if (!sel.value) sel.selectedIndex = Math.min(2, sel.options.length - 1);
+}
+
+vresize(); updateBsOptions(); update();
 
 
 // ── Bisection Animation ──────────────────────────────────────────────
