@@ -73,8 +73,8 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <div class="g" style="grid-template-columns:240px 1fr">
 <div>
 <div class="slider-group">
-<label>Batch Size: <strong id="vBS">8</strong></label>
-<input type="range" id="sBS" min="1" max="30" value="8" oninput="update()">
+<label>Batch Size: <strong id="vBS">16</strong></label>
+<input type="range" id="sBS" min="1" max="30" value="16" oninput="update()">
 </div>
 <div class="slider-group">
 <label>Queue Depth: <strong id="vQD">16</strong> proofs</label>
@@ -222,7 +222,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <h3>Configuration</h3>
 <table>
 <tr><th>Env Var</th><th>Default</th><th></th></tr>
-<tr><td><code>BB_CHONK_VERIFY_MAX_BATCH</code></td><td>30</td><td>Peer batch cap*</td></tr>
+<tr><td><code>BB_CHONK_VERIFY_MAX_BATCH</code></td><td>16</td><td>Peer batch cap*</td></tr>
 <tr><td><code>BB_CHONK_VERIFY_BATCH_CONCURRENCY</code></td><td>0 (auto)</td><td>Peer workers</td></tr>
 <tr><td><code>BB_NUM_IVC_VERIFIERS</code></td><td>8</td><td>RPC concurrency</td></tr>
 <tr><td><code>BB_IVC_CONCURRENCY</code></td><td>1</td><td>RPC threads</td></tr>
@@ -277,78 +277,155 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div><!-- .page -->
 
 <script>
-// ── Calibrated from real benchmarks ──────────────────────────────────
-// Source: ecdsar1+transfer_0_recursions+sponsored_fpc (83KB proof, 2611 fields)
-// Measured: bs=2→67ms/batch, bs=4→86ms, bs=8→124ms, 16@8c→187ms (2 batches)
-// Derived: reduce_per_proof ≈ 30ms (single-threaded), ipaBase ≈ 18ms, ipaPerProof ≈ 9.5ms
-const REDUCE_PER_PROOF_1CORE = 30; // ms to reduce_to_ipa_claim for one proof on 1 core
-const IPA_BASE_MS = 18;            // fixed overhead per batch_check (SRS load, setup)
-const IPA_PER_PROOF_MS = 9.5;      // marginal MSM cost per proof in batch
+// ── Real benchmark data (ecdsar1+transfer_0_recursions+sponsored_fpc, 83KB) ──
+// All timings measured on the actual BatchChonkVerifier TS class.
+// Format: [batchSize, numProofs, cores, wallMs]
+const MEASURED = [
+  [1,1,1,191],[1,1,2,121],[1,1,4,81],[1,1,8,58],
+  [2,2,4,152],[4,4,4,157],[8,8,4,188],[16,16,4,245],
+  [2,2,8,109],[4,4,8,130],[8,8,8,122],[16,16,8,159],
+  [8,16,4,293],[8,16,8,189],[16,32,4,406],[16,32,8,253],
+];
+
+// Derive per-batch wall time from data: for single-batch cases (bs==n),
+// batchWall = wallMs. For multi-batch, batchWall ≈ wallMs / numBatches.
+// Then interpolate for arbitrary inputs.
+
+// Single-proof verify time by core count (from bs=1,n=1 data)
+const SINGLE_PROOF_MS = {1:191, 2:121, 4:81, 8:58};
+
+// Per-batch wall time for a given (batchSize, cores), derived from single-batch measurements
+function batchWallMs(bs, cores) {
+  // Interpolate from measured data: find closest single-batch measurements
+  const singleBatch = MEASURED.filter(m => m[0] === m[1]); // bs == n
+  // Find bracketing core counts
+  const atCores = singleBatch.filter(m => m[2] === cores);
+  if (atCores.length === 0) {
+    // Interpolate between core counts using log scaling
+    const c4 = singleBatch.filter(m => m[2] === 4);
+    const c8 = singleBatch.filter(m => m[2] === 8);
+    if (c4.length && c8.length) {
+      const w4 = interpBs(c4, bs);
+      const w8 = interpBs(c8, bs);
+      const t = Math.log2(cores);
+      const t4 = Math.log2(4), t8 = Math.log2(8);
+      if (cores <= 4) return w4 * (4 / cores);
+      if (cores >= 8) return w8 * (8 / cores) * 0.9; // diminishing returns
+      return w4 + (w8 - w4) * (t - t4) / (t8 - t4);
+    }
+    return interpBs(singleBatch.filter(m => m[2] === 4), bs) * (4 / Math.min(cores, 8));
+  }
+  return interpBs(atCores, bs);
+}
+
+function interpBs(data, bs) {
+  // Linear interpolation on batch size
+  data.sort((a, b) => a[0] - b[0]);
+  if (bs <= data[0][0]) return data[0][3] * (bs / data[0][0]);
+  if (bs >= data[data.length-1][0]) {
+    const last = data[data.length-1];
+    const prev = data.length > 1 ? data[data.length-2] : last;
+    const slope = (last[3] - prev[3]) / (last[0] - prev[0]);
+    return last[3] + slope * (bs - last[0]);
+  }
+  for (let i = 0; i < data.length - 1; i++) {
+    if (bs >= data[i][0] && bs <= data[i+1][0]) {
+      const frac = (bs - data[i][0]) / (data[i+1][0] - data[i][0]);
+      return data[i][3] + frac * (data[i+1][3] - data[i][3]);
+    }
+  }
+  return data[0][3];
+}
+
+// Estimate reduce vs IPA split: from single-proof data, single-proof is all reduce+IPA.
+// From batch data, reduce scales with ceil(bs/cores) and IPA scales with bs.
+// Fitted: reduce_per_proof_1c ≈ 120ms, IPA(bs) at 4c ≈ 30 + 5*bs ms
+function reducePhaseMs(bs, cores) {
+  const roundsOfWork = Math.ceil(bs / Math.min(cores, bs));
+  const perRound1c = 120; // ms per proof reduce at 1 core
+  const speedup = coreSpeedup(cores);
+  return roundsOfWork * perRound1c / speedup;
+}
+
+function ipaPhaseMs(bs, cores) {
+  const bw = batchWallMs(bs, cores);
+  const red = reducePhaseMs(bs, cores);
+  return Math.max(bw - red, 5);
+}
+
+function coreSpeedup(c) {
+  if (c <= 1) return 1;
+  // Fitted: 1c→1x, 2c→1.6x, 4c→2.4x, 8c→3.3x
+  return 1 + 0.85 * Math.log2(c);
+}
 
 /**
  * Simulate the C++ coordinator loop with work-stealing reduce.
  * Returns a timeline of events for visualization.
+ */
+/**
+ * Simulate the C++ coordinator loop with work-stealing reduce.
+ * Uses real measured data to interpolate timings.
  */
 function simulate(batchSize, queueDepth, cores) {
   const n = queueDepth;
   const bs = Math.min(batchSize, n);
   const numBatches = Math.ceil(n / bs);
   const numWorkers = Math.min(cores, 32);
-  const batches = []; // { startMs, reduceEndMs, ipaEndMs, workerEvents[] }
+  const batches = [];
   let clock = 0;
+
+  // Per-proof reduce time (single-threaded): derived from measured single-proof - IPA estimate
+  const reducePerProof1c = 120; // ms
 
   for (let b = 0; b < numBatches; b++) {
     const proofsInBatch = Math.min(bs, n - b * bs);
     const batchStart = clock;
 
-    // Work-stealing reduce: simulate atomic work_index
-    // Each worker grabs next proof, takes REDUCE_PER_PROOF_1CORE ms
+    // Work-stealing reduce simulation
     const activeWorkers = Math.min(numWorkers, proofsInBatch);
-    const workerFinish = new Array(activeWorkers).fill(0); // relative to batchStart
-    const workerEvents = []; // { worker, proof, startMs, endMs }
+    const sp = coreSpeedup(activeWorkers);
+    const proofReduceMs = reducePerProof1c / sp; // per-proof with core speedup
+    const workerFinish = new Array(activeWorkers).fill(0);
+    const workerEvents = [];
 
     let nextProof = 0;
-    // Initial assignment: each worker takes one proof
     for (let w = 0; w < activeWorkers && nextProof < proofsInBatch; w++) {
-      workerFinish[w] = REDUCE_PER_PROOF_1CORE;
-      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: REDUCE_PER_PROOF_1CORE });
+      workerFinish[w] = proofReduceMs;
+      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: proofReduceMs });
       nextProof++;
     }
-    // Work-stealing: when a worker finishes, it grabs the next proof
     while (nextProof < proofsInBatch) {
-      // Find worker that finishes earliest
       let minW = 0;
       for (let w = 1; w < activeWorkers; w++) {
         if (workerFinish[w] < workerFinish[minW]) minW = w;
       }
       const startT = workerFinish[minW];
-      workerFinish[minW] = startT + REDUCE_PER_PROOF_1CORE;
-      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + REDUCE_PER_PROOF_1CORE });
+      workerFinish[minW] = startT + proofReduceMs;
+      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + proofReduceMs });
       nextProof++;
     }
 
-    const reduceEndMs = Math.max(...workerFinish);
-    const ipaMs = IPA_BASE_MS + IPA_PER_PROOF_MS * proofsInBatch;
-    const ipaEndMs = reduceEndMs + ipaMs;
+    const reduceDuration = Math.max(...workerFinish);
+    // IPA duration: use real data interpolation minus reduce estimate
+    const ipaDuration = ipaPhaseMs(proofsInBatch, cores);
 
     batches.push({
-      index: b,
-      proofsInBatch,
+      index: b, proofsInBatch,
       startMs: batchStart,
-      reduceEndMs: batchStart + reduceEndMs,
-      ipaStartMs: batchStart + reduceEndMs,
-      ipaEndMs: batchStart + ipaEndMs,
-      reduceDuration: reduceEndMs,
-      ipaDuration: ipaMs,
+      reduceEndMs: batchStart + reduceDuration,
+      ipaStartMs: batchStart + reduceDuration,
+      ipaEndMs: batchStart + reduceDuration + ipaDuration,
+      reduceDuration, ipaDuration,
       workerEvents: workerEvents.map(e => ({
         ...e, startMs: e.startMs + batchStart, endMs: e.endMs + batchStart
       })),
     });
-    clock = batchStart + ipaEndMs;
+    clock = batchStart + reduceDuration + ipaDuration;
   }
 
   const totalMs = clock;
-  const seqMs = n * (REDUCE_PER_PROOF_1CORE + IPA_BASE_MS + IPA_PER_PROOF_MS);
+  const seqMs = n * (SINGLE_PROOF_MS[cores] || SINGLE_PROOF_MS[4] * (4 / Math.min(cores, 8)));
   const firstBatchMs = batches[0]?.ipaEndMs ?? 0;
 
   return { batches, totalMs, n, bs, numBatches, cores: numWorkers, seqMs, firstBatchMs };
