@@ -626,6 +626,215 @@ function drawViz(sim) {
 
 vresize(); update();
 
+// ── Traffic Pattern Simulation ────────────────────────────────────────
+// Direct lookup of measured batch wall times: BATCH_WALL[bs][cores] = ms
+const BATCH_WALL = {
+  1:  {1:191, 2:120, 4:79, 8:60, 16:47},
+  2:  {1:260, 2:170, 4:152, 8:109, 16:85},
+  4:  {1:380, 2:240, 4:157, 8:130, 16:100},
+  8:  {1:514, 2:313, 4:188, 8:122, 16:95},
+  16: {1:702, 2:420, 4:248, 8:174, 16:125},
+};
+function getBatchWall(bs, cores) {
+  const row = BATCH_WALL[bs]; if (!row) return bs * 50;
+  return row[cores] || row[4] * (4 / Math.min(cores, 8));
+}
+
+const TC = document.getElementById('trafficCanvas'), tctx = TC.getContext('2d');
+let TW, TH, tdpr;
+function tresize() { tdpr = devicePixelRatio||1; const r=TC.getBoundingClientRect(); TW=r.width; TH=260; TC.width=TW*tdpr; TC.height=TH*tdpr; tctx.scale(tdpr,tdpr); }
+window.addEventListener('resize', tresize); tresize();
+
+let tRunning = false, tAnim = null;
+
+function startTraffic() {
+  if (tRunning) return;
+  tRunning = true;
+  document.getElementById('trafficBtn').textContent = 'Running...';
+
+  const pattern = document.getElementById('tPattern').value;
+  const bs = +document.getElementById('tBS').value;
+  const cores = +document.getElementById('tCores').value;
+  const batchWall = getBatchWall(bs, cores);
+  const singleWall = getBatchWall(1, cores);
+
+  // Generate arrival times based on pattern
+  let arrivals = []; // ms timestamps
+  if (pattern === 'burst') {
+    for (let i = 0; i < 16; i++) arrivals.push(0);
+  } else if (pattern === 'trickle') {
+    for (let i = 0; i < 16; i++) arrivals.push(i * singleWall * 1.2);
+  } else if (pattern === 'wave') {
+    for (let w = 0; w < 4; w++) {
+      for (let i = 0; i < 4; i++) arrivals.push(w * batchWall * 1.5 + i * 2);
+    }
+  } else { // slam
+    for (let i = 0; i < 32; i++) arrivals.push(0);
+  }
+
+  // Simulate coordinator: process batches as proofs arrive
+  const proofs = arrivals.map((t, i) => ({ id: i, arriveMs: t, batchStart: -1, doneMs: -1, batch: -1 }));
+  const batches = []; // { startMs, endMs, proofIds[] }
+  let clock = 0, batchIdx = 0, qi = 0;
+  const queue = [];
+
+  // Discrete event simulation
+  const maxT = Math.max(...arrivals) + batchWall * 4;
+  const step = 0.5;
+
+  let coordBusy = false, coordFreeAt = 0;
+
+  for (let t = 0; t <= maxT; t += step) {
+    // Enqueue arriving proofs
+    while (qi < proofs.length && proofs[qi].arriveMs <= t) {
+      queue.push(proofs[qi]);
+      qi++;
+    }
+
+    // Coordinator: if idle and queue has work, take a batch
+    if (!coordBusy && queue.length > 0) {
+      const take = Math.min(bs, queue.length);
+      const batch = queue.splice(0, take);
+      const wall = getBatchWall(Math.min(take, bs), cores);
+      const bStart = t;
+      const bEnd = t + wall;
+      const bObj = { startMs: bStart, endMs: bEnd, proofIds: batch.map(p => p.id) };
+      batches.push(bObj);
+      for (const p of batch) { p.batchStart = bStart; p.doneMs = bEnd; p.batch = batches.length - 1; }
+      coordBusy = true;
+      coordFreeAt = bEnd;
+    }
+
+    if (coordBusy && t >= coordFreeAt) {
+      coordBusy = false;
+    }
+
+    // Stop when all proofs are done
+    if (proofs.every(p => p.doneMs >= 0) && !coordBusy) break;
+  }
+
+  // Animate
+  const totalMs = Math.max(...proofs.map(p => p.doneMs), 1);
+  const stats = {
+    avgLatency: proofs.reduce((s, p) => s + (p.doneMs - p.arriveMs), 0) / proofs.length,
+    maxLatency: Math.max(...proofs.map(p => p.doneMs - p.arriveMs)),
+    throughput: (proofs.length / totalMs) * 1000,
+    numBatches: batches.length,
+  };
+
+  let animT = 0;
+  const speed = Math.max(totalMs / 3000, 0.5); // play in ~3 seconds
+
+  function drawTraffic() {
+    tctx.clearRect(0, 0, TW, TH);
+    tctx.fillStyle = '#0d1117'; tctx.fillRect(0, 0, TW, TH);
+
+    const pad = 12, lx = pad + 40;
+    const scale = (TW - lx - pad - 20) / (totalMs * 1.05);
+    const proofY = 30, batchY = 80, timeY = TH - 20;
+
+    // Time axis
+    tctx.strokeStyle = '#30363d'; tctx.lineWidth = 0.5;
+    const tStep = totalMs > 1000 ? 200 : totalMs > 400 ? 100 : totalMs > 200 ? 50 : 20;
+    for (let ms = 0; ms <= totalMs * 1.05; ms += tStep) {
+      const x = lx + ms * scale;
+      tctx.fillStyle = '#8b949e'; tctx.font = '8px system-ui';
+      tctx.fillText(Math.round(ms) + 'ms', x - 10, timeY + 12);
+      tctx.beginPath(); tctx.moveTo(x, proofY - 5); tctx.lineTo(x, timeY); tctx.stroke();
+    }
+
+    // Labels
+    tctx.fillStyle = '#8b949e'; tctx.font = '9px system-ui';
+    tctx.fillText('proofs', pad, proofY + 5);
+    tctx.fillText('batches', pad, batchY + 10);
+
+    // Draw proof dots (arrive → wait → done)
+    for (const p of proofs) {
+      const ax = lx + p.arriveMs * scale;
+      const arrived = animT >= p.arriveMs;
+      const processing = animT >= p.batchStart && p.batchStart >= 0;
+      const done = animT >= p.doneMs && p.doneMs >= 0;
+
+      if (!arrived) continue;
+
+      // Waiting line (arrive to batch start)
+      if (p.batchStart >= 0 && processing) {
+        tctx.strokeStyle = 'rgba(139,148,158,0.3)'; tctx.lineWidth = 1;
+        tctx.beginPath(); tctx.moveTo(ax, proofY); tctx.lineTo(lx + p.batchStart * scale, proofY); tctx.stroke();
+      }
+
+      // Dot
+      const r = 4;
+      tctx.beginPath(); tctx.arc(ax, proofY, r, 0, Math.PI * 2);
+      tctx.fillStyle = done ? '#3fb950' : processing ? '#bc8cff' : '#8b949e';
+      tctx.fill();
+
+      // Latency whisker (arrive to done)
+      if (done) {
+        const dx = lx + p.doneMs * scale;
+        tctx.strokeStyle = 'rgba(63,185,80,0.3)'; tctx.lineWidth = 1;
+        tctx.beginPath(); tctx.moveTo(ax, proofY + 6); tctx.lineTo(dx, proofY + 6); tctx.stroke();
+        // Done marker
+        tctx.beginPath(); tctx.arc(dx, proofY + 6, 2, 0, Math.PI * 2);
+        tctx.fillStyle = '#3fb950'; tctx.fill();
+      }
+    }
+
+    // Draw batch bars
+    for (let i = 0; i < batches.length; i++) {
+      const b = batches[i];
+      if (animT < b.startMs) continue;
+      const x = lx + b.startMs * scale;
+      const w = Math.min(animT, b.endMs) * scale - b.startMs * scale;
+      const fullW = (b.endMs - b.startMs) * scale;
+      const done = animT >= b.endMs;
+      const h = 18;
+      const y = batchY + (i % 3) * (h + 3);
+
+      tctx.fillStyle = done ? 'rgba(63,185,80,0.15)' : 'rgba(188,140,255,0.2)';
+      tctx.beginPath(); tctx.roundRect(lx + b.startMs * scale, y, done ? fullW : w, h, 3); tctx.fill();
+      tctx.strokeStyle = done ? '#3fb950' : '#bc8cff'; tctx.lineWidth = 1;
+      tctx.beginPath(); tctx.roundRect(lx + b.startMs * scale, y, fullW, h, 3); tctx.stroke();
+
+      // Label
+      tctx.fillStyle = done ? '#3fb950' : '#bc8cff'; tctx.font = '8px system-ui'; tctx.textAlign = 'center';
+      const label = `${b.proofIds.length}p ${Math.round(b.endMs - b.startMs)}ms`;
+      if (fullW > 40) tctx.fillText(label, lx + b.startMs * scale + fullW / 2, y + h / 2 + 3);
+      tctx.textAlign = 'left';
+    }
+
+    // Title
+    tctx.fillStyle = '#e6edf3'; tctx.font = 'bold 11px system-ui';
+    tctx.fillText(`${pattern} — bs=${bs}, ${cores} cores`, pad, 14);
+
+    // Playhead
+    const px = lx + animT * scale;
+    tctx.strokeStyle = 'rgba(88,166,255,0.5)'; tctx.lineWidth = 1;
+    tctx.beginPath(); tctx.moveTo(px, proofY - 8); tctx.lineTo(px, timeY); tctx.stroke();
+
+    // Stats (show when done)
+    if (animT >= totalMs) {
+      document.getElementById('trafficStats').innerHTML =
+        `avg latency: <strong>${stats.avgLatency.toFixed(0)}ms</strong> &middot; ` +
+        `max: <strong>${stats.maxLatency.toFixed(0)}ms</strong> &middot; ` +
+        `throughput: <strong>${stats.throughput.toFixed(1)}/s</strong> &middot; ` +
+        `${stats.numBatches} batches`;
+    }
+
+    animT += speed * 16;
+    if (animT <= totalMs * 1.1) {
+      tAnim = requestAnimationFrame(drawTraffic);
+    } else {
+      tRunning = false;
+      document.getElementById('trafficBtn').textContent = 'Start';
+    }
+  }
+
+  if (tAnim) cancelAnimationFrame(tAnim);
+  document.getElementById('trafficStats').textContent = '';
+  drawTraffic();
+}
+
 // ── Bisection Animation ──────────────────────────────────────────────
 const BC = document.getElementById('bisectCanvas'), bctx = BC.getContext('2d');
 const bLog = document.getElementById('bisectLog');
