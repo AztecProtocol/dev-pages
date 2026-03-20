@@ -108,8 +108,8 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 
 <!-- BENCHMARKS -->
 <div class="sec">
-<h2>Benchmarks (Real Protocol Proofs)</h2>
-<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB proof, 2611 fields). Downloaded from pinned S3 inputs, proved via <code>bb prove --scheme chonk</code>.</p>
+<h2>Benchmarks (Example E2E App Proofs)</h2>
+<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB proof, 2611 fields). Generated from pinned e2e app IVC inputs via <code>bb prove --scheme chonk</code>.</p>
 <div class="g" style="grid-template-columns:1fr 1fr 1fr">
 <div class="box">
 <h3>Core Count Scaling</h3>
@@ -230,6 +230,54 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </table>
 <p style="margin-top:6px;font-size:11px">Errors: invalid VK → immediate FAILED. Reduce throws → caught, FAILED. Batch fails → bisect. FIFO ends → all pending rejected. Exit → sync unlink.</p>
 </div>
+</div>
+
+<hr>
+
+<!-- APPENDIX: FURTHER OPTIMIZATIONS -->
+<div class="sec">
+<h2>Appendix: Further Optimizations (Explored)</h2>
+<p style="margin-bottom:10px">The current batch verifier batches only the final IPA check. The <code>lw/opt-unified-batch</code> branch explores three deeper optimizations that batch work <em>within</em> the reduce phase itself. These are not yet merged but show the path to further throughput gains.</p>
+
+<div class="g" style="grid-template-columns:1fr 1fr 1fr">
+<div class="box" style="border-color:var(--p)">
+<h3>1. Deferred Shplemini MSM</h3>
+<p>During ECCVM verification, each proof eagerly computes a ~148-point Grumpkin MSM (<code>IPA::reduce_batch_opening_claim</code>). Instead, fold the Shplemini commitments into a deferred claim via <code>expand_claim_with_batch()</code>. All deferred claims are finalized in one batched MSM at the end.</p>
+<p style="margin-top:4px"><strong class="accent">Saves:</strong> N × 148-point MSMs → 1 × (N×148)-point MSM</p>
+</div>
+<div class="box" style="border-color:var(--p)">
+<h3>2. Batched BN254 Pairings</h3>
+<p>Each proof requires 3 pairing checks on BN254 (MegaZK PCS, Merge protocol, Translator). Currently verified eagerly per-proof. Instead, defer all 3×N pairing checks and aggregate into a single batched pairing via random linear combination.</p>
+<p style="margin-top:4px"><strong class="accent">Saves:</strong> 3N pairings → 1 batched pairing</p>
+</div>
+<div class="box" style="border-color:var(--p)">
+<h3>3. Fused IPA Butterfly</h3>
+<p>Standard IPA verify builds a 32768-element <code>s_vec</code> per claim then MSMs it. Fuse the butterfly expansion with weighted accumulation: pre-scale initial seed by α<sup>i</sup>·a₀ᵢ, accumulate in-place. Eliminates per-claim <code>s_vec</code> storage entirely.</p>
+<p style="margin-top:4px"><strong class="accent">Measured:</strong> transcript processing 77ms → 38ms (-50%), batch_reduce_verify 174ms → 121ms (-31%) for 120 claims at 4 cores. Peak memory -120MB.</p>
+</div>
+</div>
+
+<div class="box" style="border-color:var(--o);margin-top:8px">
+<h3>Unified Batch Verifier (Not Yet Merged)</h3>
+<p>The <code>lw/opt-unified-batch</code> branch combines all three optimizations into a unified pipeline where <code>batch_check</code> performs pairing aggregation + batched IPA in one step, and bisection handles any failure (pairing or IPA) using cached reduction results. Also batches the ~30 L/R transcript MSMs across all claims into a single (N×30+N)-point MSM via <code>read_transcript_data_no_msm</code>.</p>
+<p style="margin-top:4px;font-size:11px;color:var(--m)">Status: prototyped and benchmarked on the branch. Reverted Shplemini MSM deferral (not clean enough yet). Butterfly fusion is the most immediately shippable piece.</p>
+</div>
+
+<details style="margin-top:10px">
+<summary>Where MSMs happen in the current pipeline (for yarn-project developers)</summary>
+<div style="padding:8px 0">
+<table>
+<tr><th>MSM</th><th>Curve</th><th>Points</th><th>When</th><th>TS Entry Point</th></tr>
+<tr><td>MegaZK Shplonk verify</td><td>BN254</td><td>~2</td><td>reduce_to_ipa_claim (per proof)</td><td><code>BatchChonkVerifier.enqueueProof()</code></td></tr>
+<tr><td>Merge protocol</td><td>BN254</td><td>~4</td><td>reduce_to_ipa_claim (per proof)</td><td>same</td></tr>
+<tr><td>ECCVM Shplemini</td><td>Grumpkin</td><td>~148</td><td>reduce_to_ipa_claim (per proof)</td><td>same</td></tr>
+<tr><td>Translator Shplonk</td><td>BN254</td><td>~2</td><td>reduce_to_ipa_claim (per proof)</td><td>same</td></tr>
+<tr><td style="color:var(--g)"><strong>IPA batch verify</strong></td><td style="color:var(--g)">Grumpkin</td><td style="color:var(--g)">SRS-sized</td><td style="color:var(--g)"><strong>batch_check (per batch)</strong></td><td><code>BatchChonkVerifier</code> (batched)</td></tr>
+<tr><td>IPA L/R transcript</td><td>Grumpkin</td><td>~30 per claim</td><td>batch_reduce_verify</td><td>inside batch_check</td></tr>
+</table>
+<p style="font-size:10px;color:var(--m);margin-top:6px">The <strong class="good">green row</strong> is the MSM that batching amortizes. The others run per-proof in the reduce phase. Future optimizations target deferring the per-proof MSMs to batch them too.</p>
+</div>
+</details>
 </div>
 
 </div><!-- .page -->
