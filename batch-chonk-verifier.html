@@ -61,7 +61,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 <div class="box hi">
 <h3>The Solution</h3>
-<p><code>IPA::batch_reduce_verify</code> checks N proofs in <strong>1 MSM</strong> via random linear combination. Bad proofs isolated via bisection (O(k log N) MSMs for k failures). Reduce phase parallelizes across workers.</p>
+<p><code>IPA::batch_reduce_verify</code> checks N proofs in <strong>1 MSM</strong> via random linear combination. Bad proofs isolated via bisection. Result: <strong>85 proofs/sec at 8 cores</strong> with real protocol proofs. Bisection adds &lt;3% overhead.</p>
 </div>
 </div>
 
@@ -83,16 +83,17 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 
 <!-- BENCHMARKS -->
 <div class="sec">
-<h2>Benchmarks (Real Proofs)</h2>
+<h2>Benchmarks (Real Protocol Proofs)</h2>
+<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB proof, 2611 fields). Downloaded from pinned S3 inputs, proved via <code>bb prove --scheme chonk</code>.</p>
 <div class="g" style="grid-template-columns:1fr 1fr 1fr">
 <div class="box">
 <h3>Core Count Scaling</h3>
 <p>16 proofs, batch_size=8</p>
 <table>
 <tr><th>Cores</th><th>Wall</th><th>Avg/proof</th><th>Throughput</th></tr>
-<tr><td>2</td><td>971ms</td><td>125ms</td><td class="good">16.5/s</td></tr>
-<tr><td>4</td><td>765ms</td><td>80ms</td><td class="good">20.9/s</td></tr>
-<tr><td>8</td><td>672ms</td><td>59ms</td><td class="good">23.8/s</td></tr>
+<tr><td>2</td><td>508ms</td><td>130ms</td><td class="good">31.5/s</td></tr>
+<tr><td>4</td><td>297ms</td><td>86ms</td><td class="good">53.9/s</td></tr>
+<tr><td>8</td><td>187ms</td><td>62ms</td><td class="good">85.4/s</td></tr>
 </table>
 </div>
 <div class="box">
@@ -100,9 +101,9 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <p>8 proofs, 8 cores</p>
 <table>
 <tr><th>Batch</th><th>Wall</th><th>Throughput</th></tr>
-<tr><td>2</td><td>729ms</td><td>11.0/s</td></tr>
-<tr><td>4</td><td>664ms</td><td>12.0/s</td></tr>
-<tr><td>8</td><td>619ms</td><td class="good">12.9/s</td></tr>
+<tr><td>2</td><td>268ms</td><td>29.9/s</td></tr>
+<tr><td>4</td><td>171ms</td><td>46.7/s</td></tr>
+<tr><td>8</td><td>124ms</td><td class="good">64.5/s</td></tr>
 </table>
 </div>
 <div class="box">
@@ -110,14 +111,14 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <p>8 proofs, 2 bad, 8 cores</p>
 <table>
 <tr><th>Metric</th><th>Value</th></tr>
-<tr><td>Wall time</td><td>606ms</td></tr>
-<tr><td>vs all-valid (619ms)</td><td class="good">-2%</td></tr>
+<tr><td>Wall time</td><td>128ms</td></tr>
+<tr><td>vs all-valid (124ms)</td><td class="good">+3%</td></tr>
 <tr><td>Bad proofs isolated</td><td>2/8</td></tr>
 </table>
 <p style="margin-top:4px;font-size:10px;color:var(--m)">Bisection adds negligible overhead because reduce phase is not repeated.</p>
 </div>
 </div>
-<p style="font-size:10px;color:var(--m)">Measured with test-circuit proofs (small gates). Production proofs are larger but the IPA batch check — the key optimization — scales the same.</p>
+<p style="font-size:10px;color:var(--m)">At 8 cores: <strong>85 proofs/sec</strong> (16 proofs in 187ms). A full block of 30 txs verifies in ~350ms. Sequential verification would take ~30x longer.</p>
 </div>
 
 <hr>
