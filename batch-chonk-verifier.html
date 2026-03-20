@@ -68,7 +68,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <!-- INTERACTIVE EXPLORER -->
 <div class="sec">
 <h2>Interactive Performance Explorer</h2>
-<p style="font-size:11px;color:var(--m);margin-bottom:6px">Simulates the C++ coordinator loop with work-stealing reduce. Timings interpolated from real e2e app proof benchmarks. Assumes 0 bad proofs (happy path).</p>
+<p style="font-size:11px;color:var(--m);margin-bottom:6px">Simulates the C++ coordinator loop with work-stealing reduce. Approximate model calibrated from real benchmarks — see tables below for exact measured numbers.</p>
 <div class="box" id="explorer">
 <div class="g" style="grid-template-columns:240px 1fr">
 <div>
@@ -158,15 +158,17 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 <div class="g" style="margin-top:0">
 <div class="box">
-<h3>Batch Size Scaling — 8 cores</h3>
+<h3>Batch Size Scaling — 8 cores (5-trial medians)</h3>
 <table>
-<tr><th>Batch</th><th>Proofs</th><th>Wall</th><th>Throughput</th></tr>
-<tr><td>2</td><td>2</td><td>109ms</td><td>18.3/s</td></tr>
-<tr><td>4</td><td>4</td><td>130ms</td><td>30.8/s</td></tr>
-<tr><td>8</td><td>8</td><td>122ms</td><td>65.6/s</td></tr>
-<tr><td>16</td><td>16</td><td>174ms</td><td class="good">92.0/s</td></tr>
+<tr><th>Batch</th><th>Wall</th><th>Reduce</th><th>IPA*</th><th>Throughput</th></tr>
+<tr><td>1</td><td>54ms</td><td>51ms</td><td>3ms</td><td>18.5/s</td></tr>
+<tr><td>2</td><td>106ms</td><td>51ms</td><td>55ms</td><td>18.9/s</td></tr>
+<tr><td>4</td><td>108ms</td><td>51ms</td><td>57ms</td><td>37.0/s</td></tr>
+<tr><td>8</td><td>119ms</td><td>51ms</td><td>68ms</td><td>67.2/s</td></tr>
+<tr><td>12</td><td>140ms</td><td>~102ms</td><td>~38ms</td><td>85.7/s</td></tr>
+<tr><td>16</td><td>152ms</td><td>~102ms</td><td>~50ms</td><td class="good">105.3/s</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Throughput increases with batch size because IPA MSM cost is amortized. Diminishing returns above ~16 as reduce phase dominates.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">* IPA = wall - reduce. For bs &le; 8 (1 reduce round), reduce is ~51ms. For bs &gt; 8, 2 rounds (~102ms). IPA has a ~50ms fixed overhead (SRS key build) + sub-linear growth with batch size.</p>
 </div>
 <div class="box">
 <h3>Bisection Cost Model</h3>
@@ -327,7 +329,16 @@ const MEASURED = [
 // Then interpolate for arbitrary inputs.
 
 // Single-proof verify time by core count (all measured)
-const SINGLE_PROOF_MS = {1:191, 2:120, 3:94, 4:79, 5:71, 6:65, 7:61, 8:60, 10:55, 12:54, 16:47};
+const SINGLE_PROOF_MS = {1:191, 2:120, 3:94, 4:79, 5:71, 6:65, 7:61, 8:54, 10:55, 12:54, 16:47};
+
+// Detailed phase breakdown at 8 cores (5-trial medians):
+// bs: wall, avgVerify (per-proof C++ time_in_verify_ms)
+// 1:  54ms, 51ms    | 2: 106ms, 51ms   | 3: 105ms, 50ms  | 4: 108ms, 53ms
+// 6: 111ms, 56ms    | 8: 119ms, 62ms   | 12: 140ms, 64ms | 16: 152ms, 73ms
+//
+// Derived: reduce_per_proof at 8c ≈ 51ms. IPA overhead: ~50ms fixed + ~2ms/proof.
+// For bs<=cores: reduce_wall = reduce_per_proof (all parallel).
+// For bs>cores: reduce_wall = ceil(bs/cores) * reduce_per_proof.
 
 // Per-batch wall time for a given (batchSize, cores), derived from single-batch measurements
 function batchWallMs(bs, cores) {
@@ -374,26 +385,27 @@ function interpBs(data, bs) {
   return data[0][3];
 }
 
-// Estimate reduce vs IPA split: from single-proof data, single-proof is all reduce+IPA.
-// From batch data, reduce scales with ceil(bs/cores) and IPA scales with bs.
-// Fitted: reduce_per_proof_1c ≈ 120ms, IPA(bs) at 4c ≈ 30 + 5*bs ms
+// Phase breakdown model calibrated from 5-trial medians at 8 cores.
+// reduce_per_proof: 191ms at 1c, 120ms at 2c, 79ms at 4c, 51ms at 8c (from single-proof measurements)
+// IPA: ~50ms fixed overhead + ~2.5ms per proof in batch
+function reducePerProofMs(cores) {
+  return SINGLE_PROOF_MS[cores] || SINGLE_PROOF_MS[4] * (4 / Math.min(cores, 16));
+}
+
 function reducePhaseMs(bs, cores) {
-  const roundsOfWork = Math.ceil(bs / Math.min(cores, bs));
-  const perRound1c = 120; // ms per proof reduce at 1 core
-  const speedup = coreSpeedup(cores);
-  return roundsOfWork * perRound1c / speedup;
+  const workers = Math.min(cores, bs);
+  const rounds = Math.ceil(bs / workers);
+  // Each round: one proof reduce. With work-stealing, reduce_per_proof stays ~constant.
+  return rounds * reducePerProofMs(cores);
 }
 
-function ipaPhaseMs(bs, cores) {
-  const bw = batchWallMs(bs, cores) || 50;
-  const red = reducePhaseMs(bs, cores) || 30;
-  return Math.max(bw - red, 5);
-}
-
-function coreSpeedup(c) {
-  if (c <= 1) return 1;
-  // Fitted: 1c→1x, 2c→1.6x, 4c→2.4x, 8c→3.3x
-  return 1 + 0.85 * Math.log2(c);
+function ipaPhaseMs(bs, _cores) {
+  // IPA MSM cost derived from measured data at 8 cores:
+  // bs=1→3ms, bs=2→55ms, bs=4→57ms, bs=8→68ms, bs=16→50ms (after 2-round reduce)
+  // The MSM has a ~50ms fixed overhead (SRS key build) that dominates for small batches.
+  // Combined s_vec construction + pippenger grows sub-linearly (pippenger is O(n/log n)).
+  if (bs <= 1) return 3;
+  return 50 + 2 * Math.log2(bs);
 }
 
 /**
@@ -412,8 +424,7 @@ function simulate(batchSize, queueDepth, cores) {
   const batches = [];
   let clock = 0;
 
-  // Per-proof reduce time (single-threaded): derived from measured single-proof - IPA estimate
-  const reducePerProof1c = 120; // ms
+  const proofReduceTime = reducePerProofMs(cores);
 
   for (let b = 0; b < numBatches; b++) {
     const proofsInBatch = Math.min(bs, n - b * bs);
@@ -421,15 +432,13 @@ function simulate(batchSize, queueDepth, cores) {
 
     // Work-stealing reduce simulation
     const activeWorkers = Math.min(numWorkers, proofsInBatch);
-    const sp = coreSpeedup(activeWorkers);
-    const proofReduceMs = reducePerProof1c / sp; // per-proof with core speedup
     const workerFinish = new Array(activeWorkers).fill(0);
     const workerEvents = [];
 
     let nextProof = 0;
     for (let w = 0; w < activeWorkers && nextProof < proofsInBatch; w++) {
-      workerFinish[w] = proofReduceMs;
-      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: proofReduceMs });
+      workerFinish[w] = proofReduceTime;
+      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: proofReduceTime});
       nextProof++;
     }
     while (nextProof < proofsInBatch) {
@@ -438,8 +447,8 @@ function simulate(batchSize, queueDepth, cores) {
         if (workerFinish[w] < workerFinish[minW]) minW = w;
       }
       const startT = workerFinish[minW];
-      workerFinish[minW] = startT + proofReduceMs;
-      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + proofReduceMs });
+      workerFinish[minW] = startT + proofReduceTime;
+      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + proofReduceTime});
       nextProof++;
     }
 
