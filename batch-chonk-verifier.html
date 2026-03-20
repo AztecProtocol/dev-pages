@@ -106,6 +106,34 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 </div>
 
+<!-- TRAFFIC SIMULATION -->
+<div class="sec">
+<h2>Traffic Patterns: Burst vs Trickle</h2>
+<p style="font-size:11px;color:var(--m);margin-bottom:6px">Animates how proof arrival rate affects batching, latency, and throughput. Each dot is a proof — watch how they queue, batch, and resolve.</p>
+<div class="box">
+<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+<button id="trafficBtn" onclick="startTraffic()" style="background:var(--a);color:var(--bg);border:none;padding:4px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:600">Start</button>
+<label style="font-size:10px;color:var(--m)">Pattern
+<select id="tPattern" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:3px;padding:2px 4px;font-size:10px">
+<option value="burst">Burst (16 at once)</option>
+<option value="trickle">Trickle (1 every 80ms)</option>
+<option value="wave">Wave (4, pause, 4, pause...)</option>
+<option value="slam">Slam (32 at once)</option>
+</select></label>
+<label style="font-size:10px;color:var(--m)">Batch
+<select id="tBS" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:3px;padding:2px 4px;font-size:10px">
+<option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16" selected>16</option>
+</select></label>
+<label style="font-size:10px;color:var(--m)">Cores
+<select id="tCores" style="background:var(--s);color:var(--t);border:1px solid var(--b);border-radius:3px;padding:2px 4px;font-size:10px">
+<option value="1">1</option><option value="2">2</option><option value="4" selected>4</option><option value="8">8</option><option value="16">16</option>
+</select></label>
+<span id="trafficStats" style="font-size:10px;color:var(--m);margin-left:auto"></span>
+</div>
+<canvas id="trafficCanvas" width="1060" height="260"></canvas>
+</div>
+</div>
+
 <!-- BISECTION ANIMATION -->
 <div class="sec">
 <h2>Bisection</h2>
@@ -483,9 +511,6 @@ function update() {
   const bs = +document.getElementById('sBS').value;
   const qd = +document.getElementById('sQD').value;
   const cores = +document.getElementById('sCores').value;
-  document.getElementById('vBS').textContent = bs;
-  document.getElementById('vQD').textContent = qd;
-  document.getElementById('vCores').textContent = cores;
 
   const sim = simulate(bs, qd, cores);
 
