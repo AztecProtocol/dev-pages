@@ -124,44 +124,36 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <!-- BENCHMARKS -->
 <div class="sec">
 <h2>Benchmarks (Example E2E App Proofs)</h2>
-<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB, 2611 fields). Measured on dev machine (not dedicated benchmark hardware). Phase breakdown (reduce/IPA) from C++ <code>VerifyResult</code> fields. Absolute times will differ on production hardware; patterns and ratios should hold.</p>
+<p style="font-size:11px;color:var(--m);margin-bottom:8px">From C++ <code>chonk_bench BatchVerify</code> using test-circuit proofs (small gates). Phase breakdown from <code>VerifyResult.reduce_ms</code> / <code>ipa_ms</code> fields. Production proofs are larger but the IPA scaling pattern holds.</p>
 <div class="g">
 <div class="box">
-<h3>Core Scaling — 16 proofs, batch_size=8 (with phase breakdown)</h3>
+<h3>Phase Breakdown — from C++ chonk_bench (batch_size x cores)</h3>
 <table>
-<tr><th>Cores</th><th>Wall</th><th>Reduce*</th><th>IPA MSM</th><th>Throughput</th></tr>
-<tr><td>2</td><td>507ms</td><td>21ms</td><td class="warn">95ms</td><td>31.5/s</td></tr>
-<tr><td>4</td><td>298ms</td><td>21ms</td><td class="warn">55ms</td><td>53.7/s</td></tr>
-<tr><td>8</td><td>192ms</td><td>21ms</td><td class="warn">35ms</td><td class="good">83.2/s</td></tr>
+<tr><th></th><th colspan="5" style="text-align:center">IPA MSM time (ms)</th></tr>
+<tr><th>bs \ cores</th><th>1</th><th>2</th><th>4</th><th>6</th><th>8</th></tr>
+<tr><td>1</td><td>166</td><td>94</td><td>55</td><td>40</td><td>32</td></tr>
+<tr><td>4</td><td>166</td><td>96</td><td>54</td><td>41</td><td>32</td></tr>
+<tr><td>8</td><td>173</td><td>101</td><td>58</td><td>44</td><td>36</td></tr>
+<tr><td>16</td><td>195</td><td>119</td><td>70</td><td class="warn">57</td><td>52</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">* Reduce per proof is constant (~21ms) — each worker runs single-threaded via <code>set_parallel_for_concurrency(1)</code>. IPA MSM scales with cores via <code>set_parallel_for_concurrency(num_cores)</code>: 2.7x speedup from 2→8 cores.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Reduce is constant at <strong>~15ms/proof</strong> (single-threaded per worker). IPA scales with both cores (pippenger parallelism) and batch size (more claims in MSM). At 6 cores (default): IPA goes from 40ms (bs=1) to 57ms (bs=16) — a 42% increase for 16x the proofs.</p>
 </div>
 <div class="box">
-<h3>Core Scaling — Single Proof (latency)</h3>
+<h3>Wall Time — from C++ chonk_bench (ms)</h3>
 <table>
-<tr><th>Cores</th><th>Latency</th><th>vs 1 core</th></tr>
-<tr><td>1</td><td>191ms</td><td>1.0x</td></tr>
-<tr><td>2</td><td>120ms</td><td>1.6x</td></tr>
-<tr><td>3</td><td>94ms</td><td>2.0x</td></tr>
-<tr><td>4</td><td>79ms</td><td>2.4x</td></tr>
-<tr><td>6</td><td>65ms</td><td>2.9x</td></tr>
-<tr><td>8</td><td>60ms</td><td>3.2x</td></tr>
-<tr><td>12</td><td>54ms</td><td>3.5x</td></tr>
-<tr><td>16</td><td>47ms</td><td>4.1x</td></tr>
+<tr><th>bs \ cores</th><th>1</th><th>2</th><th>4</th><th>6</th><th>8</th></tr>
+<tr><td>1</td><td>182</td><td>111</td><td>71</td><td>57</td><td>49</td></tr>
+<tr><td>4</td><td>391</td><td>237</td><td>139</td><td>117</td><td>96</td></tr>
+<tr><td>8</td><td>465</td><td>261</td><td>161</td><td>131</td><td>103</td></tr>
+<tr><td>16</td><td>607</td><td>339</td><td>207</td><td class="warn">160</td><td>136</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Sub-linear scaling (Amdahl's law): serial phases in sumcheck/Goblin limit parallelism. Still, 4 cores gives 2.4x on a single proof.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">At default 6 cores: single proof = 57ms, batch of 16 = 160ms (2.8x for 16 proofs). Throughput: <strong class="good">100 proofs/sec</strong> at 6 cores with bs=16.</p>
 </div>
 </div>
 <div class="g" style="margin-top:0">
 <div class="box">
-<h3>Batch Size Scaling — 8 cores</h3>
-<table>
-<tr><th>Batch</th><th>Wall</th><th>Throughput</th></tr>
-<tr><td>2</td><td>269ms</td><td>29.8/s</td></tr>
-<tr><td>4</td><td>180ms</td><td>44.4/s</td></tr>
-<tr><td>8</td><td>124ms</td><td class="good">64.6/s</td></tr>
-</table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Throughput increases with batch size because the IPA MSM cost is amortized. Phase data: reduce is always ~21ms/proof; IPA at 8 cores is ~35ms per batch regardless of batch size (dominated by SRS commitment key + pippenger fixed costs).</p>
+<h3>Key Insight</h3>
+<p>IPA MSM cost grows only <strong>sub-linearly</strong> with batch size (pippenger is O(n/log n)): at 6 cores, bs=1→40ms, bs=16→57ms. Meanwhile reduce parallelizes perfectly: 16 proofs on 6 cores = ceil(16/6)×15ms = 45ms. This is why batching wins: <strong>you pay ~42% more IPA for 16x the proofs</strong>.</p>
 </div>
 <div class="box">
 <h3>Bisection Cost Model</h3>
@@ -381,7 +373,7 @@ function interpBs(data, bs) {
 // Phase breakdown from real C++ reduce_ms/ipa_ms fields:
 // Reduce is ~21ms per proof regardless of cores (each worker runs single-threaded).
 // The parallelism comes from multiple workers each doing one proof.
-const REDUCE_PER_PROOF = 21; // ms, constant across core counts
+const REDUCE_PER_PROOF = 15; // ms, constant across core counts (from C++ chonk_bench)
 
 function reducePhaseMs(bs, cores) {
   const workers = Math.min(cores, bs);
@@ -389,14 +381,28 @@ function reducePhaseMs(bs, cores) {
   return rounds * REDUCE_PER_PROOF;
 }
 
-// IPA MSM measured per-batch-of-8 at each core count (from C++ reduce_ms/ipa_ms fields):
-// 2c→95ms, 4c→55ms, 8c→35ms. Scales with cores (pippenger uses set_parallel_for_concurrency).
-const IPA_BY_CORES = {1:140, 2:95, 3:72, 4:55, 5:47, 6:42, 7:38, 8:35, 10:30, 12:27, 16:22};
+// IPA MSM measured from C++ google benchmark (chonk_bench BatchVerify).
+// Scales with both cores (pippenger parallelism) AND batch size (more claims in MSM).
+// Direct lookup: IPA_DATA[bs][cores] = ms
+const IPA_DATA = {
+  1:  {1:166, 2:94, 4:55, 6:40, 8:32},
+  4:  {1:166, 2:96, 4:54, 6:41, 8:32},
+  8:  {1:173, 2:101, 4:58, 6:44, 8:36},
+  16: {1:195, 2:119, 4:70, 6:57, 8:52},
+};
 function ipaPhaseMs(bs, cores) {
-  const ipaBase = IPA_BY_CORES[cores] || IPA_BY_CORES[4] * Math.sqrt(4 / Math.min(cores, 16));
-  // IPA grows sub-linearly with batch size (pippenger is O(n/log n))
-  if (bs <= 1) return ipaBase * 0.05; // single proof: tiny IPA
-  return ipaBase * (1 + 0.08 * Math.log2(bs / 8)); // scale from bs=8 baseline
+  // Find closest measured batch size
+  const sizes = [1, 4, 8, 16];
+  let lo = sizes[0], hi = sizes[sizes.length - 1];
+  for (const s of sizes) { if (s <= bs) lo = s; }
+  for (let i = sizes.length - 1; i >= 0; i--) { if (sizes[i] >= bs) hi = sizes[i]; }
+  const loData = IPA_DATA[lo] || IPA_DATA[8];
+  const hiData = IPA_DATA[hi] || IPA_DATA[8];
+  // Interpolate on batch size
+  const frac = lo === hi ? 0 : (bs - lo) / (hi - lo);
+  const loVal = loData[cores] || loData[4] * Math.sqrt(4 / cores);
+  const hiVal = hiData[cores] || hiData[4] * Math.sqrt(4 / cores);
+  return loVal + frac * (hiVal - loVal);
 }
 
 /**
