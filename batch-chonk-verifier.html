@@ -373,16 +373,8 @@ function interpBs(data, bs) {
   return data[0][3];
 }
 
-// Phase breakdown from real C++ reduce_ms/ipa_ms fields:
-// Reduce is ~21ms per proof regardless of cores (each worker runs single-threaded).
-// The parallelism comes from multiple workers each doing one proof.
-const REDUCE_PER_PROOF = 15; // ms, constant across core counts (from C++ chonk_bench)
-
-function reducePhaseMs(bs, cores) {
-  const workers = Math.min(cores, bs);
-  const rounds = Math.ceil(bs / workers);
-  return rounds * REDUCE_PER_PROOF;
-}
+// Reduce is ~15ms per proof regardless of cores (from C++ chonk_bench).
+// Not used directly in simulator — it derives reduce from wall - IPA.
 
 // Complete measured data from C++ chonk_bench BatchVerify.
 // WALL[bs][cores] = wall time in ms. IPA[bs][cores] = IPA MSM time in ms.
@@ -420,12 +412,9 @@ function ipaPhaseMs(bs, cores) {
 }
 
 /**
- * Simulate the C++ coordinator loop with work-stealing reduce.
- * Returns a timeline of events for visualization.
- */
-/**
- * Simulate the C++ coordinator loop with work-stealing reduce.
- * Uses real measured data to interpolate timings.
+ * Simulate using REAL measured wall times. For single-batch (bs==qd), use
+ * the measured wall directly. For multi-batch, use measured per-batch wall.
+ * Reduce/IPA split from real C++ data.
  */
 function simulate(batchSize, queueDepth, cores) {
   const n = queueDepth;
@@ -435,21 +424,25 @@ function simulate(batchSize, queueDepth, cores) {
   const batches = [];
   let clock = 0;
 
-  const proofReduceTime = REDUCE_PER_PROOF;
-
   for (let b = 0; b < numBatches; b++) {
     const proofsInBatch = Math.min(bs, n - b * bs);
     const batchStart = clock;
 
-    // Work-stealing reduce simulation
+    // Use real measured wall time for this (bs, cores) combo
+    const measuredWall = lookupWall(proofsInBatch, cores);
+    const measuredIpa = ipaPhaseMs(proofsInBatch, cores);
+    const reduceDuration = Math.max(measuredWall - measuredIpa, proofsInBatch * 2);
+
+    // Build work-stealing timeline for visualization
     const activeWorkers = Math.min(numWorkers, proofsInBatch);
+    const perProofReduce = reduceDuration / Math.ceil(proofsInBatch / activeWorkers);
     const workerFinish = new Array(activeWorkers).fill(0);
     const workerEvents = [];
 
     let nextProof = 0;
     for (let w = 0; w < activeWorkers && nextProof < proofsInBatch; w++) {
-      workerFinish[w] = proofReduceTime;
-      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: proofReduceTime});
+      workerFinish[w] = perProofReduce;
+      workerEvents.push({ worker: w, proof: b * bs + nextProof, startMs: 0, endMs: perProofReduce });
       nextProof++;
     }
     while (nextProof < proofsInBatch) {
@@ -458,34 +451,51 @@ function simulate(batchSize, queueDepth, cores) {
         if (workerFinish[w] < workerFinish[minW]) minW = w;
       }
       const startT = workerFinish[minW];
-      workerFinish[minW] = startT + proofReduceTime;
-      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + proofReduceTime});
+      workerFinish[minW] = startT + perProofReduce;
+      workerEvents.push({ worker: minW, proof: b * bs + nextProof, startMs: startT, endMs: startT + perProofReduce });
       nextProof++;
     }
-
-    const reduceDuration = Math.max(...workerFinish);
-    // IPA duration: use real data interpolation minus reduce estimate
-    const ipaDuration = ipaPhaseMs(proofsInBatch, cores);
 
     batches.push({
       index: b, proofsInBatch,
       startMs: batchStart,
       reduceEndMs: batchStart + reduceDuration,
       ipaStartMs: batchStart + reduceDuration,
-      ipaEndMs: batchStart + reduceDuration + ipaDuration,
-      reduceDuration, ipaDuration,
+      ipaEndMs: batchStart + measuredWall,
+      reduceDuration, ipaDuration: measuredIpa,
       workerEvents: workerEvents.map(e => ({
         ...e, startMs: e.startMs + batchStart, endMs: e.endMs + batchStart
       })),
     });
-    clock = batchStart + reduceDuration + ipaDuration;
+    clock = batchStart + measuredWall;
   }
 
   const totalMs = clock;
-  const seqMs = n * (SINGLE_PROOF_MS[cores] || SINGLE_PROOF_MS[4] * (4 / Math.min(cores, 8)));
   const firstBatchMs = batches[0]?.ipaEndMs ?? 0;
 
-  return { batches, totalMs, n, bs, numBatches, cores: numWorkers, seqMs, firstBatchMs };
+  return { batches, totalMs, n, bs, numBatches, cores: numWorkers, firstBatchMs };
+}
+
+// Lookup measured wall time, interpolating if needed
+function lookupWall(bs, cores) {
+  if (WALL[bs] && WALL[bs][cores]) return WALL[bs][cores];
+  // Find closest measured batch sizes for this core count
+  const measured = Object.keys(WALL).map(Number).filter(b => WALL[b][cores]).sort((a,b) => a - b);
+  if (!measured.length) return bs * 30; // fallback
+  if (bs <= measured[0]) return WALL[measured[0]][cores] * (bs / measured[0]);
+  if (bs >= measured[measured.length-1]) {
+    const last = measured[measured.length-1];
+    const prev = measured.length > 1 ? measured[measured.length-2] : last;
+    const slope = (WALL[last][cores] - WALL[prev][cores]) / (last - prev);
+    return WALL[last][cores] + slope * (bs - last);
+  }
+  for (let i = 0; i < measured.length - 1; i++) {
+    if (bs >= measured[i] && bs <= measured[i+1]) {
+      const f = (bs - measured[i]) / (measured[i+1] - measured[i]);
+      return WALL[measured[i]][cores] + f * (WALL[measured[i+1]][cores] - WALL[measured[i]][cores]);
+    }
+  }
+  return bs * 30;
 }
 
 const VC = document.getElementById('vizCanvas'), vctx = VC.getContext('2d');
