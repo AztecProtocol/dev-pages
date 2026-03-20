@@ -118,41 +118,62 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <!-- BENCHMARKS -->
 <div class="sec">
 <h2>Benchmarks (Example E2E App Proofs)</h2>
-<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB proof, 2611 fields). Generated from pinned e2e app IVC inputs via <code>bb prove --scheme chonk</code>.</p>
-<div class="g" style="grid-template-columns:1fr 1fr 1fr">
+<p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB, 2611 fields). All times measured end-to-end through the BatchChonkVerifier TS class.</p>
+<div class="g">
 <div class="box">
-<h3>Core Count Scaling</h3>
-<p>16 proofs, batch_size=8</p>
+<h3>Core Scaling — 16 proofs, batch_size=16</h3>
 <table>
-<tr><th>Cores</th><th>Wall</th><th>Avg/proof</th><th>Throughput</th></tr>
-<tr><td>2</td><td>508ms</td><td>130ms</td><td class="good">31.5/s</td></tr>
-<tr><td>4</td><td>297ms</td><td>86ms</td><td class="good">53.9/s</td></tr>
-<tr><td>8</td><td>187ms</td><td>62ms</td><td class="good">85.4/s</td></tr>
+<tr><th>Cores</th><th>Wall</th><th>Throughput</th><th>vs 1 core</th></tr>
+<tr><td>1</td><td>702ms</td><td>22.8/s</td><td>1.0x</td></tr>
+<tr><td>2</td><td>420ms</td><td>38.1/s</td><td>1.7x</td></tr>
+<tr><td>3</td><td>299ms</td><td>53.5/s</td><td>2.3x</td></tr>
+<tr><td>4</td><td>248ms</td><td>64.5/s</td><td>2.8x</td></tr>
+<tr><td>6</td><td>193ms</td><td>82.9/s</td><td>3.6x</td></tr>
+<tr><td>8</td><td>174ms</td><td class="good">92.0/s</td><td>4.0x</td></tr>
+<tr><td>12</td><td>149ms</td><td class="good">107.4/s</td><td>4.7x</td></tr>
+<tr><td>16</td><td>125ms</td><td class="good">128.0/s</td><td>5.6x</td></tr>
 </table>
 </div>
 <div class="box">
-<h3>Batch Size Scaling</h3>
-<p>8 proofs, 8 cores</p>
+<h3>Core Scaling — Single Proof (latency)</h3>
 <table>
-<tr><th>Batch</th><th>Wall</th><th>Throughput</th></tr>
-<tr><td>2</td><td>268ms</td><td>29.9/s</td></tr>
-<tr><td>4</td><td>171ms</td><td>46.7/s</td></tr>
-<tr><td>8</td><td>124ms</td><td class="good">64.5/s</td></tr>
+<tr><th>Cores</th><th>Latency</th><th>vs 1 core</th></tr>
+<tr><td>1</td><td>191ms</td><td>1.0x</td></tr>
+<tr><td>2</td><td>120ms</td><td>1.6x</td></tr>
+<tr><td>3</td><td>94ms</td><td>2.0x</td></tr>
+<tr><td>4</td><td>79ms</td><td>2.4x</td></tr>
+<tr><td>6</td><td>65ms</td><td>2.9x</td></tr>
+<tr><td>8</td><td>60ms</td><td>3.2x</td></tr>
+<tr><td>12</td><td>54ms</td><td>3.5x</td></tr>
+<tr><td>16</td><td>47ms</td><td>4.1x</td></tr>
 </table>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Sub-linear scaling (Amdahl's law): serial phases in sumcheck/Goblin limit parallelism. Still, 4 cores gives 2.4x on a single proof.</p>
+</div>
+</div>
+<div class="g" style="margin-top:0">
+<div class="box">
+<h3>Batch Size Scaling — 8 cores</h3>
+<table>
+<tr><th>Batch</th><th>Proofs</th><th>Wall</th><th>Throughput</th></tr>
+<tr><td>2</td><td>2</td><td>109ms</td><td>18.3/s</td></tr>
+<tr><td>4</td><td>4</td><td>130ms</td><td>30.8/s</td></tr>
+<tr><td>8</td><td>8</td><td>122ms</td><td>65.6/s</td></tr>
+<tr><td>16</td><td>16</td><td>174ms</td><td class="good">92.0/s</td></tr>
+</table>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Throughput increases with batch size because IPA MSM cost is amortized. Diminishing returns above ~16 as reduce phase dominates.</p>
 </div>
 <div class="box">
 <h3>Bisection Cost Model</h3>
-<p>When bad proofs fail during IPA (not reduce):</p>
+<p style="margin-bottom:4px">When bad proofs fail during IPA (not reduce), bisection re-runs <code>batch_check</code> on subsets:</p>
 <table>
-<tr><th>Scenario</th><th>Extra MSMs</th><th>Est. overhead</th></tr>
-<tr><td>1 bad in 8</td><td>~3 (log<sub>2</sub> 8)</td><td>+40-60ms</td></tr>
+<tr><th>Scenario</th><th>Extra MSMs</th><th>Est. cost</th></tr>
+<tr><td>1 bad in 8</td><td>~3</td><td>+40-60ms</td></tr>
 <tr><td>2 bad in 8</td><td>~5</td><td>+70-90ms</td></tr>
-<tr><td>1 bad in 30</td><td>~5 (log<sub>2</sub> 30)</td><td>+60-80ms</td></tr>
+<tr><td>1 bad in 16</td><td>~4</td><td>+50-70ms</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Each bisection level re-runs <code>batch_check</code> on a subset: cost = IPA_BASE + IPA_PER_PROOF &times; subset_size. The reduce phase is never repeated. Note: the TS bench currently corrupts early proof fields (caught in reduce, not IPA), so it doesn't trigger real bisection. C++ tests exercise true IPA-level bisection.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Each level: cost = IPA_BASE + IPA_PER_PROOF &times; subset. Reduce phase is never repeated.</p>
 </div>
 </div>
-<p style="font-size:10px;color:var(--m)">At 8 cores: <strong>85 proofs/sec</strong> (16 proofs in 187ms). A full block of 30 txs verifies in ~350ms. Sequential verification would take ~30x longer.</p>
 </div>
 
 <hr>
@@ -281,9 +302,17 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 // All timings measured on the actual BatchChonkVerifier TS class.
 // Format: [batchSize, numProofs, cores, wallMs]
 const MEASURED = [
-  [1,1,1,191],[1,1,2,121],[1,1,4,81],[1,1,8,58],
-  [2,2,4,152],[4,4,4,157],[8,8,4,188],[16,16,4,245],
+  // [batchSize, numProofs, cores, wallMs]
+  // Single proof at every core count
+  [1,1,1,191],[1,1,2,120],[1,1,3,94],[1,1,4,79],[1,1,5,71],
+  [1,1,6,65],[1,1,7,61],[1,1,8,60],[1,1,10,55],[1,1,12,54],[1,1,16,47],
+  // Batch of 16 at every core count
+  [16,16,1,702],[16,16,2,420],[16,16,3,299],[16,16,4,248],[16,16,5,207],
+  [16,16,6,193],[16,16,7,185],[16,16,8,174],[16,16,10,164],[16,16,12,149],[16,16,16,125],
+  // Batch size sweep at 4 and 8 cores
+  [2,2,4,152],[4,4,4,157],[8,8,4,188],
   [2,2,8,109],[4,4,8,130],[8,8,8,122],[16,16,8,159],
+  // Multi-batch
   [8,16,4,293],[8,16,8,189],[16,32,4,406],[16,32,8,253],
 ];
 
@@ -291,8 +320,8 @@ const MEASURED = [
 // batchWall = wallMs. For multi-batch, batchWall ≈ wallMs / numBatches.
 // Then interpolate for arbitrary inputs.
 
-// Single-proof verify time by core count (from bs=1,n=1 data)
-const SINGLE_PROOF_MS = {1:191, 2:121, 4:81, 8:58};
+// Single-proof verify time by core count (all measured)
+const SINGLE_PROOF_MS = {1:191, 2:120, 3:94, 4:79, 5:71, 6:65, 7:61, 8:60, 10:55, 12:54, 16:47};
 
 // Per-batch wall time for a given (batchSize, cores), derived from single-batch measurements
 function batchWallMs(bs, cores) {
