@@ -516,6 +516,7 @@ function update() {
 
   const me = document.getElementById('metrics');
   const b0 = sim.batches[0];
+  const singleMs = SINGLE_PROOF_MS[sim.cores] || 80;
   me.innerHTML = `
     <div class="row"><span class="label">Total wall time</span><span class="val">${sim.totalMs.toFixed(0)}ms</span></div>
     <div class="row"><span class="label">Throughput</span><span class="val highlight">${((sim.n / sim.totalMs) * 1000).toFixed(1)} proofs/s</span></div>
@@ -523,8 +524,8 @@ function update() {
     <div class="row"><span class="label">Reduce (batch 0)</span><span class="val">${b0 ? b0.reduceDuration.toFixed(0) : 0}ms</span></div>
     <div class="row"><span class="label">IPA MSM (batch 0)</span><span class="val">${b0 ? b0.ipaDuration.toFixed(0) : 0}ms</span></div>
     <div class="row"><span class="label">First proof latency</span><span class="val">${sim.firstBatchMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Sequential baseline</span><span class="val">${sim.seqMs.toFixed(0)}ms</span></div>
-    <div class="row"><span class="label">Speedup</span><span class="val highlight">${(sim.seqMs / sim.totalMs).toFixed(1)}x</span></div>
+    <div class="row"><span class="label">Single proof latency</span><span class="val">${singleMs}ms</span></div>
+    <div class="row"><span class="label">vs sequential (${sim.n} x ${singleMs}ms)</span><span class="val">${sim.totalMs.toFixed(0)} / ${sim.n * singleMs}ms</span></div>
   `;
 
   drawViz(sim);
