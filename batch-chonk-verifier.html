@@ -168,7 +168,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <tr><td>12</td><td>140ms</td><td>~102ms</td><td>~38ms</td><td>85.7/s</td></tr>
 <tr><td>16</td><td>152ms</td><td>~102ms</td><td>~50ms</td><td class="good">105.3/s</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">* IPA = wall - reduce. For bs &le; 8 (1 reduce round), reduce is ~51ms. For bs &gt; 8, 2 rounds (~102ms). IPA has a ~50ms fixed overhead (SRS key build) + sub-linear growth with batch size.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">* IPA = wall - reduce (inferred). The IPA MSM uses all allocated cores (<code>set_parallel_for_concurrency</code>), so its cost varies with core count. <a href="https://github.com/AztecProtocol/aztec-packages/pull/21861">PR #21861</a> adds direct reduce_ms/ipa_ms reporting from C++ for exact per-phase numbers on the benchmark machine.</p>
 </div>
 <div class="box">
 <h3>Bisection Cost Model</h3>
@@ -252,7 +252,7 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <table>
 <tr><th>Env Var</th><th>Default</th><th></th></tr>
 <tr><td><code>BB_CHONK_VERIFY_MAX_BATCH</code></td><td>16</td><td>Peer batch cap*</td></tr>
-<tr><td><code>BB_CHONK_VERIFY_BATCH_CONCURRENCY</code></td><td>0 (auto)</td><td>Peer workers</td></tr>
+<tr><td><code>BB_CHONK_VERIFY_BATCH_CONCURRENCY</code></td><td>6</td><td>Peer workers</td></tr>
 <tr><td><code>BB_NUM_IVC_VERIFIERS</code></td><td>8</td><td>RPC concurrency</td></tr>
 <tr><td><code>BB_IVC_CONCURRENCY</code></td><td>1</td><td>RPC threads</td></tr>
 </table>
@@ -399,13 +399,13 @@ function reducePhaseMs(bs, cores) {
   return rounds * reducePerProofMs(cores);
 }
 
-function ipaPhaseMs(bs, _cores) {
-  // IPA MSM cost derived from measured data at 8 cores:
-  // bs=1→3ms, bs=2→55ms, bs=4→57ms, bs=8→68ms, bs=16→50ms (after 2-round reduce)
-  // The MSM has a ~50ms fixed overhead (SRS key build) that dominates for small batches.
-  // Combined s_vec construction + pippenger grows sub-linearly (pippenger is O(n/log n)).
-  if (bs <= 1) return 3;
-  return 50 + 2 * Math.log2(bs);
+function ipaPhaseMs(bs, cores) {
+  // IPA MSM uses set_parallel_for_concurrency(num_cores_), so it scales with cores.
+  // Approximate model: ~50ms fixed overhead at 8 cores, grows sub-linearly with batch size.
+  // TODO: replace with real per-phase data from benchmark machine (PR #21861 adds reduce_ms/ipa_ms to VerifyResult).
+  const coreScale = 8 / Math.max(cores, 1);
+  if (bs <= 1) return 3 * coreScale;
+  return (50 + 2 * Math.log2(bs)) * Math.sqrt(coreScale);
 }
 
 /**
