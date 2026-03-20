@@ -141,15 +141,15 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </table>
 </div>
 <div class="box">
-<h3>Bisection Overhead</h3>
-<p>8 proofs, 2 bad, 8 cores</p>
+<h3>Bisection Cost Model</h3>
+<p>When bad proofs fail during IPA (not reduce):</p>
 <table>
-<tr><th>Metric</th><th>Value</th></tr>
-<tr><td>Wall time</td><td>128ms</td></tr>
-<tr><td>vs all-valid (124ms)</td><td class="good">+3%</td></tr>
-<tr><td>Bad proofs isolated</td><td>2/8</td></tr>
+<tr><th>Scenario</th><th>Extra MSMs</th><th>Est. overhead</th></tr>
+<tr><td>1 bad in 8</td><td>~3 (log<sub>2</sub> 8)</td><td>+40-60ms</td></tr>
+<tr><td>2 bad in 8</td><td>~5</td><td>+70-90ms</td></tr>
+<tr><td>1 bad in 30</td><td>~5 (log<sub>2</sub> 30)</td><td>+60-80ms</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">Bisection re-runs the IPA MSM on subsets (O(k log N) extra MSMs) but does <em>not</em> repeat the reduce phase. The +3% overhead is small because the reduce phase dominates at this batch size.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Each bisection level re-runs <code>batch_check</code> on a subset: cost = IPA_BASE + IPA_PER_PROOF &times; subset_size. The reduce phase is never repeated. Note: the TS bench currently corrupts early proof fields (caught in reduce, not IPA), so it doesn't trigger real bisection. C++ tests exercise true IPA-level bisection.</p>
 </div>
 </div>
 <p style="font-size:10px;color:var(--m)">At 8 cores: <strong>85 proofs/sec</strong> (16 proofs in 187ms). A full block of 30 txs verifies in ~350ms. Sequential verification would take ~30x longer.</p>
