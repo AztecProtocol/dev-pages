@@ -127,18 +127,14 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 <p style="font-size:11px;color:var(--m);margin-bottom:8px">Proofs from <code>ecdsar1+transfer_0_recursions+sponsored_fpc</code> (9 circuits, 83KB, 2611 fields). All times measured end-to-end through the BatchChonkVerifier TS class.</p>
 <div class="g">
 <div class="box">
-<h3>Core Scaling — 16 proofs, batch_size=16</h3>
+<h3>Core Scaling — 16 proofs, batch_size=8 (with phase breakdown)</h3>
 <table>
-<tr><th>Cores</th><th>Wall</th><th>Throughput</th><th>vs 1 core</th></tr>
-<tr><td>1</td><td>702ms</td><td>22.8/s</td><td>1.0x</td></tr>
-<tr><td>2</td><td>420ms</td><td>38.1/s</td><td>1.7x</td></tr>
-<tr><td>3</td><td>299ms</td><td>53.5/s</td><td>2.3x</td></tr>
-<tr><td>4</td><td>248ms</td><td>64.5/s</td><td>2.8x</td></tr>
-<tr><td>6</td><td>193ms</td><td>82.9/s</td><td>3.6x</td></tr>
-<tr><td>8</td><td>174ms</td><td class="good">92.0/s</td><td>4.0x</td></tr>
-<tr><td>12</td><td>149ms</td><td class="good">107.4/s</td><td>4.7x</td></tr>
-<tr><td>16</td><td>125ms</td><td class="good">128.0/s</td><td>5.6x</td></tr>
+<tr><th>Cores</th><th>Wall</th><th>Reduce*</th><th>IPA MSM</th><th>Throughput</th></tr>
+<tr><td>2</td><td>507ms</td><td>21ms</td><td class="warn">95ms</td><td>31.5/s</td></tr>
+<tr><td>4</td><td>298ms</td><td>21ms</td><td class="warn">55ms</td><td>53.7/s</td></tr>
+<tr><td>8</td><td>192ms</td><td>21ms</td><td class="warn">35ms</td><td class="good">83.2/s</td></tr>
 </table>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">* Reduce per proof is constant (~21ms) — each worker runs single-threaded via <code>set_parallel_for_concurrency(1)</code>. IPA MSM scales with cores via <code>set_parallel_for_concurrency(num_cores)</code>: 2.7x speedup from 2→8 cores.</p>
 </div>
 <div class="box">
 <h3>Core Scaling — Single Proof (latency)</h3>
@@ -158,17 +154,14 @@ hr{border:none;border-top:1px solid var(--b);margin:20px 0}
 </div>
 <div class="g" style="margin-top:0">
 <div class="box">
-<h3>Batch Size Scaling — 8 cores (5-trial medians)</h3>
+<h3>Batch Size Scaling — 8 cores</h3>
 <table>
-<tr><th>Batch</th><th>Wall</th><th>Reduce</th><th>IPA*</th><th>Throughput</th></tr>
-<tr><td>1</td><td>54ms</td><td>51ms</td><td>3ms</td><td>18.5/s</td></tr>
-<tr><td>2</td><td>106ms</td><td>51ms</td><td>55ms</td><td>18.9/s</td></tr>
-<tr><td>4</td><td>108ms</td><td>51ms</td><td>57ms</td><td>37.0/s</td></tr>
-<tr><td>8</td><td>119ms</td><td>51ms</td><td>68ms</td><td>67.2/s</td></tr>
-<tr><td>12</td><td>140ms</td><td>~102ms</td><td>~38ms</td><td>85.7/s</td></tr>
-<tr><td>16</td><td>152ms</td><td>~102ms</td><td>~50ms</td><td class="good">105.3/s</td></tr>
+<tr><th>Batch</th><th>Wall</th><th>Throughput</th></tr>
+<tr><td>2</td><td>269ms</td><td>29.8/s</td></tr>
+<tr><td>4</td><td>180ms</td><td>44.4/s</td></tr>
+<tr><td>8</td><td>124ms</td><td class="good">64.6/s</td></tr>
 </table>
-<p style="margin-top:4px;font-size:10px;color:var(--m)">* IPA = wall - reduce (inferred). The IPA MSM uses all allocated cores (<code>set_parallel_for_concurrency</code>), so its cost varies with core count. <a href="https://github.com/AztecProtocol/aztec-packages/pull/21861">PR #21861</a> adds direct reduce_ms/ipa_ms reporting from C++ for exact per-phase numbers on the benchmark machine.</p>
+<p style="margin-top:4px;font-size:10px;color:var(--m)">Throughput increases with batch size because the IPA MSM cost is amortized. Phase data: reduce is always ~21ms/proof; IPA at 8 cores is ~35ms per batch regardless of batch size (dominated by SRS commitment key + pippenger fixed costs).</p>
 </div>
 <div class="box">
 <h3>Bisection Cost Model</h3>
@@ -385,27 +378,25 @@ function interpBs(data, bs) {
   return data[0][3];
 }
 
-// Phase breakdown model calibrated from 5-trial medians at 8 cores.
-// reduce_per_proof: 191ms at 1c, 120ms at 2c, 79ms at 4c, 51ms at 8c (from single-proof measurements)
-// IPA: ~50ms fixed overhead + ~2.5ms per proof in batch
-function reducePerProofMs(cores) {
-  return SINGLE_PROOF_MS[cores] || SINGLE_PROOF_MS[4] * (4 / Math.min(cores, 16));
-}
+// Phase breakdown from real C++ reduce_ms/ipa_ms fields:
+// Reduce is ~21ms per proof regardless of cores (each worker runs single-threaded).
+// The parallelism comes from multiple workers each doing one proof.
+const REDUCE_PER_PROOF = 21; // ms, constant across core counts
 
 function reducePhaseMs(bs, cores) {
   const workers = Math.min(cores, bs);
   const rounds = Math.ceil(bs / workers);
-  // Each round: one proof reduce. With work-stealing, reduce_per_proof stays ~constant.
-  return rounds * reducePerProofMs(cores);
+  return rounds * REDUCE_PER_PROOF;
 }
 
+// IPA MSM measured per-batch-of-8 at each core count (from C++ reduce_ms/ipa_ms fields):
+// 2c→95ms, 4c→55ms, 8c→35ms. Scales with cores (pippenger uses set_parallel_for_concurrency).
+const IPA_BY_CORES = {1:140, 2:95, 3:72, 4:55, 5:47, 6:42, 7:38, 8:35, 10:30, 12:27, 16:22};
 function ipaPhaseMs(bs, cores) {
-  // IPA MSM uses set_parallel_for_concurrency(num_cores_), so it scales with cores.
-  // Approximate model: ~50ms fixed overhead at 8 cores, grows sub-linearly with batch size.
-  // TODO: replace with real per-phase data from benchmark machine (PR #21861 adds reduce_ms/ipa_ms to VerifyResult).
-  const coreScale = 8 / Math.max(cores, 1);
-  if (bs <= 1) return 3 * coreScale;
-  return (50 + 2 * Math.log2(bs)) * Math.sqrt(coreScale);
+  const ipaBase = IPA_BY_CORES[cores] || IPA_BY_CORES[4] * Math.sqrt(4 / Math.min(cores, 16));
+  // IPA grows sub-linearly with batch size (pippenger is O(n/log n))
+  if (bs <= 1) return ipaBase * 0.05; // single proof: tiny IPA
+  return ipaBase * (1 + 0.08 * Math.log2(bs / 8)); // scale from bs=8 baseline
 }
 
 /**
@@ -424,7 +415,7 @@ function simulate(batchSize, queueDepth, cores) {
   const batches = [];
   let clock = 0;
 
-  const proofReduceTime = reducePerProofMs(cores);
+  const proofReduceTime = REDUCE_PER_PROOF;
 
   for (let b = 0; b < numBatches; b++) {
     const proofsInBatch = Math.min(bs, n - b * bs);
